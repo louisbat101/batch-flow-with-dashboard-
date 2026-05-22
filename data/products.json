@@ -1,0 +1,4 @@
+[
+  { "id": 1, "name": "Product A", "target_litres": 1.0 },
+  { "id": 2, "name": "Product B", "target_litres": 5.0 }
+]

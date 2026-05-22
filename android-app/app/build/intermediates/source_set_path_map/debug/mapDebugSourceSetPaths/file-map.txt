@@ -1,0 +1,35 @@
+com.batchloader.app-lifecycle-runtime-2.6.1-0 /Users/louishome/.gradle/caches/8.14.3/transforms/02a2a4a130e99f255c45f272aea669de/transformed/lifecycle-runtime-2.6.1/res
+com.batchloader.app-drawerlayout-1.1.1-1 /Users/louishome/.gradle/caches/8.14.3/transforms/109cc2da4acefb7357a93eae9f2127e0/transformed/drawerlayout-1.1.1/res
+com.batchloader.app-core-1.9.0-2 /Users/louishome/.gradle/caches/8.14.3/transforms/1979c8d8d34bd273828515d46306f839/transformed/core-1.9.0/res
+com.batchloader.app-lifecycle-livedata-core-2.6.1-3 /Users/louishome/.gradle/caches/8.14.3/transforms/19a69bc4cc995ee4a418cb6204673667/transformed/lifecycle-livedata-core-2.6.1/res
+com.batchloader.app-profileinstaller-1.3.0-4 /Users/louishome/.gradle/caches/8.14.3/transforms/3062724052fe6b3e2e47aed46bc2c964/transformed/profileinstaller-1.3.0/res
+com.batchloader.app-lifecycle-viewmodel-savedstate-2.6.1-5 /Users/louishome/.gradle/caches/8.14.3/transforms/4a236d72a07434dc4884bba408f38cba/transformed/lifecycle-viewmodel-savedstate-2.6.1/res
+com.batchloader.app-core-ktx-1.9.0-6 /Users/louishome/.gradle/caches/8.14.3/transforms/50f0a70b0e03f83e099226bb56ca2cf0/transformed/core-ktx-1.9.0/res
+com.batchloader.app-annotation-experimental-1.3.0-7 /Users/louishome/.gradle/caches/8.14.3/transforms/54c566a4e2777f904e735d19ed8d3e52/transformed/annotation-experimental-1.3.0/res
+com.batchloader.app-core-runtime-2.2.0-8 /Users/louishome/.gradle/caches/8.14.3/transforms/5a459dbf3c42b73eb193c96e2c262451/transformed/core-runtime-2.2.0/res
+com.batchloader.app-emoji2-1.2.0-9 /Users/louishome/.gradle/caches/8.14.3/transforms/5f584f1f3ea12db9972e56721ca4e4f9/transformed/emoji2-1.2.0/res
+com.batchloader.app-material-1.11.0-10 /Users/louishome/.gradle/caches/8.14.3/transforms/670f9739c1233e16ef0bba4a34c6da4f/transformed/material-1.11.0/res
+com.batchloader.app-activity-1.8.0-11 /Users/louishome/.gradle/caches/8.14.3/transforms/79c74047b09a2620d0305736d87be98c/transformed/activity-1.8.0/res
+com.batchloader.app-lifecycle-livedata-2.6.1-12 /Users/louishome/.gradle/caches/8.14.3/transforms/7bae204516d500601b902d2afc2baad7/transformed/lifecycle-livedata-2.6.1/res
+com.batchloader.app-lifecycle-viewmodel-2.6.1-13 /Users/louishome/.gradle/caches/8.14.3/transforms/859af3648f2bd7c3bceb6698da508850/transformed/lifecycle-viewmodel-2.6.1/res
+com.batchloader.app-savedstate-1.2.1-14 /Users/louishome/.gradle/caches/8.14.3/transforms/88ed36012bbd0633969966eb0d746377/transformed/savedstate-1.2.1/res
+com.batchloader.app-appcompat-resources-1.6.1-15 /Users/louishome/.gradle/caches/8.14.3/transforms/a5efb1c8bf592cb58412b4528185df9f/transformed/appcompat-resources-1.6.1/res
+com.batchloader.app-cardview-1.0.0-16 /Users/louishome/.gradle/caches/8.14.3/transforms/afef7ed253c181a2a8264dc317e99364/transformed/cardview-1.0.0/res
+com.batchloader.app-appcompat-1.6.1-17 /Users/louishome/.gradle/caches/8.14.3/transforms/b2f71cf5e44e75fa975658f79a5d7e4e/transformed/appcompat-1.6.1/res
+com.batchloader.app-viewpager2-1.0.0-18 /Users/louishome/.gradle/caches/8.14.3/transforms/b5cb34d9d28667489e1862de280343a8/transformed/viewpager2-1.0.0/res
+com.batchloader.app-recyclerview-1.1.0-19 /Users/louishome/.gradle/caches/8.14.3/transforms/c27e81d42b2477cf6a5ac92008acb53a/transformed/recyclerview-1.1.0/res
+com.batchloader.app-constraintlayout-2.0.1-20 /Users/louishome/.gradle/caches/8.14.3/transforms/c91b03d3015291dac50f48f2688b2bcf/transformed/constraintlayout-2.0.1/res
+com.batchloader.app-webkit-1.8.0-21 /Users/louishome/.gradle/caches/8.14.3/transforms/d4831086987b7cb1cc5d78d3096c0d1a/transformed/webkit-1.8.0/res
+com.batchloader.app-transition-1.2.0-22 /Users/louishome/.gradle/caches/8.14.3/transforms/dc2d949b44a56805d9b8611e0654c0bb/transformed/transition-1.2.0/res
+com.batchloader.app-startup-runtime-1.1.1-23 /Users/louishome/.gradle/caches/8.14.3/transforms/df4a521c7f0ff376f97d45d73471fcf8/transformed/startup-runtime-1.1.1/res
+com.batchloader.app-lifecycle-process-2.6.1-24 /Users/louishome/.gradle/caches/8.14.3/transforms/e2b3f4a4ac108f2f569fac4aa499ba71/transformed/lifecycle-process-2.6.1/res
+com.batchloader.app-coordinatorlayout-1.1.0-25 /Users/louishome/.gradle/caches/8.14.3/transforms/e427073914cd18f7505ec6a534a00505/transformed/coordinatorlayout-1.1.0/res
+com.batchloader.app-emoji2-views-helper-1.2.0-26 /Users/louishome/.gradle/caches/8.14.3/transforms/e92f3ce5e41cb1c7bbaf339fbc92e77f/transformed/emoji2-views-helper-1.2.0/res
+com.batchloader.app-fragment-1.3.6-27 /Users/louishome/.gradle/caches/8.14.3/transforms/fe0a8e9b555c5e67803761e43af4b0f0/transformed/fragment-1.3.6/res
+com.batchloader.app-pngs-28 /Users/louishome/Library/Mobile Documents/com~apple~CloudDocs/develop/batch flow/android-app/app/build/generated/res/pngs/debug
+com.batchloader.app-resValues-29 /Users/louishome/Library/Mobile Documents/com~apple~CloudDocs/develop/batch flow/android-app/app/build/generated/res/resValues/debug
+com.batchloader.app-packageDebugResources-30 /Users/louishome/Library/Mobile Documents/com~apple~CloudDocs/develop/batch flow/android-app/app/build/intermediates/incremental/debug/packageDebugResources/merged.dir
+com.batchloader.app-packageDebugResources-31 /Users/louishome/Library/Mobile Documents/com~apple~CloudDocs/develop/batch flow/android-app/app/build/intermediates/incremental/debug/packageDebugResources/stripped.dir
+com.batchloader.app-debug-32 /Users/louishome/Library/Mobile Documents/com~apple~CloudDocs/develop/batch flow/android-app/app/build/intermediates/merged_res/debug/mergeDebugResources
+com.batchloader.app-debug-33 /Users/louishome/Library/Mobile Documents/com~apple~CloudDocs/develop/batch flow/android-app/app/src/debug/res
+com.batchloader.app-main-34 /Users/louishome/Library/Mobile Documents/com~apple~CloudDocs/develop/batch flow/android-app/app/src/main/res

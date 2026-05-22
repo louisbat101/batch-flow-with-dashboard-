@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Batch Loader</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════
+     NAVIGATION BAR
+     ════════════════════════════════════════════════════════ -->
+<nav id="navbar">
+  <button class="nav-btn active" onclick="switchPage('main')">Main</button>
+  <button class="nav-btn" onclick="switchPage('load')">Load</button>
+  <button class="nav-btn" onclick="switchPage('setup')">Setup</button>
+</nav>
+
+<script>
+function switchPage(p) {
+  var i, btns = document.getElementsByClassName('nav-btn');
+  for (i = 0; i < btns.length; i++) {
+    btns[i].className = 'nav-btn';
+  }
+  var pages = document.getElementsByClassName('page');
+  for (i = 0; i < pages.length; i++) {
+    pages[i].style.display = 'none';
+  }
+  var el = document.getElementById('page-' + p);
+  if (el) el.style.display = 'block';
+  for (i = 0; i < btns.length; i++) {
+    if (btns[i].textContent.trim().toLowerCase() === p) {
+      btns[i].className = 'nav-btn active';
+    }
+  }
+  if (p === 'load' && typeof loadProducts === 'function') { if (typeof loadSettings === 'function') loadSettings(); loadProducts(); }
+  if (p === 'setup' && typeof loadProductList === 'function') { if (typeof loadSettings === 'function') loadSettings(); loadProductList(); }
+}
+</script>
+
+<!-- ════════════════════════════════════════════════════════
+     PAGE: MAIN – live status, start/stop, queue
+     ════════════════════════════════════════════════════════ -->
+<section id="page-main" class="page" style="display:block">
+  <h1>Batch Loader</h1>
+
+  <!-- ── Line 1 ─────────────────────────────────────── -->
+  <div class="line-header">Line 1</div>
+  <div class="status-card">
+    <div class="status-row">
+      <span class="label">Status</span>
+      <span id="st1-state" class="value badge idle">IDLE</span>
+    </div>
+    <div class="status-row">
+      <span class="label">Product</span>
+      <span id="st1-product" class="value">—</span>
+    </div>
+    <div class="status-row">
+      <span class="label">Target</span>
+      <span id="st1-target" class="value">0.00 L</span>
+    </div>
+  </div>
+  <div class="progress-wrap">
+    <div class="progress-bar" id="st1-bar" style="width:0%"></div>
+    <span class="progress-text" id="st1-pct">0 %</span>
+  </div>
+  <div class="meter-row">
+    <div class="meter-card">
+      <div class="meter-label">Flowmeter 1</div>
+      <div class="meter-val" id="st1-loaded">0.00 L</div>
+    </div>
+  </div>
+  <div id="st1-queue" class="queue-list"></div>
+  <div class="btn-row" style="margin-top:8px">
+    <button id="btn-start1" class="btn btn-primary" style="display:none" onclick="startLine(1)">▶ START Line 1</button>
+    <button id="btn-stop1" class="btn btn-danger" style="display:none" onclick="stopLine(1)">⏹ STOP Line 1</button>
+  </div>
+
+  <!-- ── Line 2 ─────────────────────────────────────── -->
+  <div class="line-header" style="margin-top:18px">Line 2</div>
+  <div class="status-card">
+    <div class="status-row">
+      <span class="label">Status</span>
+      <span id="st2-state" class="value badge idle">IDLE</span>
+    </div>
+    <div class="status-row">
+      <span class="label">Product</span>
+      <span id="st2-product" class="value">—</span>
+    </div>
+    <div class="status-row">
+      <span class="label">Target</span>
+      <span id="st2-target" class="value">0.00 L</span>
+    </div>
+  </div>
+  <div class="progress-wrap">
+    <div class="progress-bar" id="st2-bar" style="width:0%"></div>
+    <span class="progress-text" id="st2-pct">0 %</span>
+  </div>
+  <div class="meter-row">
+    <div class="meter-card">
+      <div class="meter-label">Flowmeter 2</div>
+      <div class="meter-val" id="st2-loaded">0.00 L</div>
+    </div>
+  </div>
+  <div id="st2-queue" class="queue-list"></div>
+  <div class="btn-row" style="margin-top:8px">
+    <button id="btn-start2" class="btn btn-primary" style="display:none" onclick="startLine(2)">▶ START Line 2</button>
+    <button id="btn-stop2" class="btn btn-danger" style="display:none" onclick="stopLine(2)">⏹ STOP Line 2</button>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════
+     PAGE: LOAD – add loads to queue
+     ════════════════════════════════════════════════════════ -->
+<section id="page-load" class="page" style="display:none">
+  <h1>Add Load</h1>
+
+  <div class="form-group">
+    <label>Select Line</label>
+    <div class="btn-row">
+      <button id="btn-line-1" class="btn btn-primary" onclick="selectLine(1)">Line 1</button>
+      <button id="btn-line-2" class="btn" onclick="selectLine(2)">Line 2</button>
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label for="load-product">Select Product</label>
+    <select id="load-product"><option value="">— load products —</option></select>
+  </div>
+
+  <div class="form-group">
+    <label for="load-amount">Amount (<span id="load-unit-label">Litres</span>)</label>
+    <input id="load-amount" type="number" min="0" step="0.1" placeholder="e.g. 500">
+  </div>
+
+  <button id="btn-queue" class="btn btn-accent">＋ ADD TO QUEUE</button>
+  <div id="load-msg" class="msg"></div>
+
+  <!-- show queues for reference -->
+  <div style="margin-top:18px">
+    <div class="line-header">Line 1 Queue</div>
+    <div id="lq1" class="queue-list"><span class="queue-empty">Empty</span></div>
+    <div class="line-header" style="margin-top:12px">Line 2 Queue</div>
+    <div id="lq2" class="queue-list"><span class="queue-empty">Empty</span></div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════
+     PAGE: SETUP – products / calibration / valve timing
+     ════════════════════════════════════════════════════════ -->
+<section id="page-setup" class="page" style="display:none">
+  <h1>Setup</h1>
+
+  <!-- ── Unit Settings ──────────────────────────────── -->
+  <div class="status-card" style="margin-bottom:18px">
+    <h2 style="margin-bottom:12px">⚙ Units</h2>
+    <div class="form-group">
+      <label>Measurement System</label>
+      <div class="btn-row">
+        <button id="btn-unit-litres" class="btn btn-primary" onclick="setUnit('litres')">Litres (Metric)</button>
+        <button id="btn-unit-gallons" class="btn" onclick="setUnit('gallons')">Gallons (US)</button>
+      </div>
+    </div>
+    <div id="unit-info" style="color:#8B8FA3;font-size:13px;margin-top:8px;text-align:center">
+      Current: Litres
+    </div>
+  </div>
+
+  <!-- ── Auto-Start Setting ─────────────────────────── -->
+  <div class="status-card" style="margin-bottom:18px">
+    <h2 style="margin-bottom:12px">🔗 Auto-Start</h2>
+    <div class="form-group" style="margin-bottom:0">
+      <label>Auto-start Line 2 when Line 1 finishes</label>
+      <div class="btn-row">
+        <button id="btn-auto-on" class="btn" onclick="setAutoStart(true)">ON</button>
+        <button id="btn-auto-off" class="btn btn-primary" onclick="setAutoStart(false)">OFF</button>
+      </div>
+    </div>
+    <div id="auto-info" style="color:#8B8FA3;font-size:13px;margin-top:8px;text-align:center">
+      Line 2 must be started manually
+    </div>
+  </div>
+
+  <!-- ── Valve Addresses ────────────────────────────── -->
+  <div class="status-card" style="margin-bottom:18px">
+    <h2 style="margin-bottom:12px">🔧 Valve Addresses (Modbus RTU)</h2>
+    <div class="form-group">
+      <label>Valve 1 – RS-485 Address</label>
+      <select id="sel-valve1" onchange="setValveAddr(1, this.value)"></select>
+      <div class="btn-row" style="margin-top:6px">
+        <button class="btn btn-primary" onclick="testValve(1,'open')">Open Valve 1</button>
+        <button class="btn btn-danger" onclick="testValve(1,'close')">Close Valve 1</button>
+      </div>
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+      <label>Valve 2 – RS-485 Address</label>
+      <select id="sel-valve2" onchange="setValveAddr(2, this.value)"></select>
+      <div class="btn-row" style="margin-top:6px">
+        <button class="btn btn-primary" onclick="testValve(2,'open')">Open Valve 2</button>
+        <button class="btn btn-danger" onclick="testValve(2,'close')">Close Valve 2</button>
+      </div>
+    </div>
+    <div id="valve-info" style="color:#8B8FA3;font-size:13px;margin-top:8px;text-align:center">
+      Valve 1: addr 11 &nbsp;|&nbsp; Valve 2: addr 12
+    </div>
+    <div id="valve-test-msg" class="msg" style="margin-top:8px"></div>
+    <div style="margin-top:12px;text-align:center">
+      <button class="btn" onclick="scanValves()" id="btn-scan-valves">🔍 Scan for Valves (1-20)</button>
+    </div>
+    <div id="valve-scan-result" style="color:#8B8FA3;font-size:13px;margin-top:6px;text-align:center"></div>
+  </div>
+
+  <!-- ── Product List ───────────────────────────────── -->
+  <h2>Products</h2>
+  <div id="product-list"></div>
+
+  <button id="btn-add-product" class="btn btn-accent">＋ Add Product</button>
+
+  <!-- add / edit form (hidden by default) -->
+  <div id="product-form" class="form-card" style="display:none">
+    <h2 id="form-title">New Product</h2>
+    <input type="hidden" id="pf-id" value="-1">
+
+    <div class="form-group">
+      <label>Product Name</label>
+      <input id="pf-name" type="text" placeholder="e.g. Diesel">
+    </div>
+    <div class="form-group">
+      <label>Flowmeter 1 – Pulses / Litre</label>
+      <input id="pf-cal1" type="number" min="1" step="1" value="450">
+    </div>
+    <div class="form-group">
+      <label>Flowmeter 2 – Pulses / Litre</label>
+      <input id="pf-cal2" type="number" min="1" step="1" value="450">
+    </div>
+    <div class="form-group">
+      <label>Valve 1 – Close Time (ms)</label>
+      <input id="pf-ct1" type="number" min="0" step="50" value="500">
+    </div>
+    <div class="form-group">
+      <label>Valve 2 – Close Time (ms)</label>
+      <input id="pf-ct2" type="number" min="0" step="50" value="500">
+    </div>
+
+    <div class="btn-row">
+      <button id="btn-save-product" class="btn btn-primary">Save</button>
+      <button id="btn-cancel-product" class="btn">Cancel</button>
+    </div>
+    <div id="setup-msg" class="msg"></div>
+  </div>
+</section>
+
+<script src="app.js"></script>
+</body>
+</html>

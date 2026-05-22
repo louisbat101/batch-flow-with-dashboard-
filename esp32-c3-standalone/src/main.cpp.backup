@@ -1,0 +1,251 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <SPIFFS.h>
+#include <esp_wifi.h>
+
+const char* AP_SSID = "ESP32-C3-Control";
+// Password must be 8..63 chars for WPA2; use "" for open network
+const char* AP_PASS = "12345678";
+
+WebServer server(80);
+
+// RGB brightness (0-255)
+#ifndef RGB_BRIGHTNESS
+  #define RGB_BRIGHTNESS 64
+#endif
+
+void handleRoot() {
+    if (!SPIFFS.exists("/index.html")) {
+        server.send(200, "text/plain", "SPIFFS index.html missing. Please upload filesystem first.");
+        return;
+    }
+    File file = SPIFFS.open("/index.html", "r");
+    server.streamFile(file, "text/html");
+    file.close();
+}
+
+// RGB LED control functions using neopixelWrite() for compatibility
+void handleLED() {
+    String color = server.uri().substring(5); // Remove "/led/" prefix
+    
+    Serial.println("LED Command: " + color);
+    
+    // Try GPIO pins one at a time to avoid conflicts
+    int rgbPins[] = {8, 2, 10, 18, 19}; // Start with most common pins
+    int numPins = sizeof(rgbPins) / sizeof(rgbPins[0]);
+    
+    if(color == "red") {
+        for(int i = 0; i < numPins; i++) {
+            neopixelWrite(rgbPins[i], RGB_BRIGHTNESS, 0, 0);  // Red
+            delay(10); // Small delay between pins
+        }
+        Serial.println("RGB LED: RED (testing pins 8,2,10,18,19)");
+        server.send(200, "text/html", "<h1>RGB LED: RED</h1><p>Testing pins: 8,2,10,18,19</p><p><a href='/'>Back</a></p>");
+        
+    } else if(color == "green") {
+        for(int i = 0; i < numPins; i++) {
+            neopixelWrite(rgbPins[i], 0, RGB_BRIGHTNESS, 0);  // Green
+            delay(10);
+        }
+        Serial.println("RGB LED: GREEN (testing pins 8,2,10,18,19)");
+        server.send(200, "text/html", "<h1>RGB LED: GREEN</h1><p>Testing pins: 8,2,10,18,19</p><p><a href='/'>Back</a></p>");
+        
+    } else if(color == "blue") {
+        for(int i = 0; i < numPins; i++) {
+            neopixelWrite(rgbPins[i], 0, 0, RGB_BRIGHTNESS);  // Blue
+            delay(10);
+        }
+        Serial.println("RGB LED: BLUE (testing pins 8,2,10,18,19)");
+        server.send(200, "text/html", "<h1>RGB LED: BLUE</h1><p>Testing pins: 8,2,10,18,19</p><p><a href='/'>Back</a></p>");
+        
+    } else if(color == "white") {
+        for(int i = 0; i < numPins; i++) {
+            neopixelWrite(rgbPins[i], RGB_BRIGHTNESS, RGB_BRIGHTNESS, RGB_BRIGHTNESS);  // White
+            delay(10);
+        }
+        Serial.println("RGB LED: WHITE (testing pins 8,2,10,18,19)");
+        server.send(200, "text/html", "<h1>RGB LED: WHITE</h1><p>Testing pins: 8,2,10,18,19</p><p><a href='/'>Back</a></p>");
+        
+    } else if(color == "off") {
+        for(int i = 0; i < numPins; i++) {
+            neopixelWrite(rgbPins[i], 0, 0, 0);  // Off
+            delay(10);
+        }
+        Serial.println("RGB LED: OFF (testing pins 8,2,10,18,19)");
+        server.send(200, "text/html", "<h1>RGB LED: OFF</h1><p>Testing pins: 8,2,10,18,19</p><p><a href='/'>Back</a></p>");
+        Serial.println("RGB LED: WHITE (GPIO 8)");
+        server.send(200, "text/html", "<h1>RGB LED: WHITE</h1><p>Using neopixelWrite() on GPIO 8</p><p><a href='/'>Back</a></p>");
+        
+    } else if(color == "off") {
+        neopixelWrite(8, 0, 0, 0);  // Off
+        Serial.println("RGB LED: OFF");
+        server.send(200, "text/html", "<h1>RGB LED: OFF</h1><p>Using neopixelWrite() on GPIO 8</p><p><a href='/'>Back</a></p>");
+        
+    } else {
+        server.send(400, "text/plain", "Unknown color: " + color);
+    }
+}
+
+void handleTest() {
+    String response = "<h1>Pin Test</h1><p>Testing pins...</p>";
+    
+    int testPins[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 18, 19, 20, 21};
+    int numPins = sizeof(testPins) / sizeof(testPins[0]);
+    
+    for(int i = 0; i < numPins; i++) {
+        int pin = testPins[i];
+        pinMode(pin, OUTPUT);
+        digitalWrite(pin, HIGH);
+        delay(300);
+        digitalWrite(pin, LOW);
+        delay(100);
+        
+        response += "<p>Tested GPIO " + String(pin) + "</p>";
+        Serial.println("Tested GPIO " + String(pin));
+    }
+    
+    response += "<p><a href='/'>Back</a></p>";
+    server.send(200, "text/html", response);
+}
+
+void handlePin() {
+    if(server.hasArg("num") && server.hasArg("state")) {
+        int pinNum = server.arg("num").toInt();
+        int state = server.arg("state").toInt();
+        
+        pinMode(pinNum, OUTPUT);
+        digitalWrite(pinNum, state);
+        
+        String response = "<h1>GPIO " + String(pinNum) + " = " + String(state) + "</h1>";
+        response += "<p><a href='/pin?num=" + String(pinNum) + "&state=" + String(!state) + "'>Toggle</a></p>";
+        response += "<p><a href='/'>Back</a></p>";
+        
+        Serial.println("GPIO " + String(pinNum) + " set to " + String(state));
+        server.send(200, "text/html", response);
+    } else {
+        server.send(400, "text/plain", "Missing parameters");
+    }
+}
+
+bool serverStarted = false;
+
+void setup() {
+    Serial.begin(115200);
+    delay(500);
+    Serial.println("\n=================================");
+    Serial.println("ESP32-C3 RGB LED Control Panel");
+    Serial.println("=================================");
+    
+    // Show RGB LED configuration
+    #if defined(RGB_BUILTIN)
+        Serial.println("✓ Found RGB_BUILTIN defined");
+        Serial.println("RGB LED Pin: RGB_BUILTIN (" + String(LED_RGB_PIN) + ")");
+    #elif defined(PIN_RGB_LED)  
+        Serial.println("✓ Found PIN_RGB_LED defined");
+        Serial.println("RGB LED Pin: PIN_RGB_LED (" + String(LED_RGB_PIN) + ")");
+    #else
+        Serial.println("Using fallback GPIO pin: " + String(LED_RGB_PIN));
+    #endif
+    Serial.println("RGB Brightness: " + String(RGB_BRIGHTNESS));
+    
+    // RGB LED startup sequence - testing one pin at a time for safety
+    Serial.println("\nStarting RGB LED test sequence...");
+    Serial.println("Testing GPIO pins one at a time: 2, 8, 10, 18, 19, 48");
+    
+    int rgbPins[] = {2, 8, 10, 18, 19, 48};
+    int numPins = sizeof(rgbPins) / sizeof(rgbPins[0]);
+    
+    // Test each pin individually
+    for(int pin = 0; pin < numPins; pin++) {
+        Serial.println("Testing GPIO " + String(rgbPins[pin]));
+        
+        // Red
+        neopixelWrite(rgbPins[pin], RGB_BRIGHTNESS, 0, 0);
+        delay(200);
+        
+        // Green  
+        neopixelWrite(rgbPins[pin], 0, RGB_BRIGHTNESS, 0);
+        delay(200);
+        
+        // Blue
+        neopixelWrite(rgbPins[pin], 0, 0, RGB_BRIGHTNESS);
+        delay(200);
+        
+        // Off
+        neopixelWrite(rgbPins[pin], 0, 0, 0);
+        delay(100);
+    }
+    
+    Serial.println("✓ RGB LED test complete!");
+    
+    // Initialize SPIFFS for web files
+    Serial.println("\nInitializing SPIFFS...");
+    if (!SPIFFS.begin(true)) {
+        Serial.println("❌ SPIFFS Mount Failed");
+    } else {
+        Serial.println("✓ SPIFFS mounted successfully");
+        
+        // List files in SPIFFS
+        File root = SPIFFS.open("/");
+        File file = root.openNextFile();
+        Serial.println("SPIFFS files:");
+        while(file){
+            Serial.print("  - ");
+            Serial.println(file.name());
+            file = root.openNextFile();
+        }
+    }
+    
+    WiFi.mode(WIFI_AP);
+    delay(100);
+    
+    // Create AP with proper settings
+    WiFi.softAP(AP_SSID, AP_PASS, 1, false, 4);
+    delay(500);
+    
+    IPAddress IP = WiFi.softAPIP();
+    Serial.println("✓ Access Point Started!");
+    Serial.print("SSID: ");
+    Serial.println(AP_SSID);
+    Serial.print("Password: ");
+    Serial.println(AP_PASS[0] ? AP_PASS : " (open)");
+    Serial.print("IP: ");
+    Serial.println(IP);
+    
+    // Set up server routes
+    server.on("/", handleRoot);
+    
+    // RGB LED routes
+    server.on("/led/red", handleLED);
+    server.on("/led/green", handleLED);  
+    server.on("/led/blue", handleLED);
+    server.on("/led/white", handleLED);
+    server.on("/led/off", handleLED);
+    
+    // GPIO testing routes
+    server.on("/test", handleTest);
+    server.on("/pin", handlePin);
+
+    // Serve static files from SPIFFS
+    server.serveStatic("/", SPIFFS, "/");
+    
+    // Start web server immediately
+    server.begin();
+    serverStarted = true;
+    Serial.println("✓ Web server started. Open http://192.168.4.1");
+    Serial.println("📁 Serving static files from SPIFFS");
+    
+    Serial.println("=================================");
+    Serial.println("Connect WiFi: ESP32-C3-Control");
+    Serial.println("Password: 12345678");
+    Serial.println("Ready for connections!");
+    Serial.println("=================================");
+}
+
+void loop() {
+    if(serverStarted) {
+        server.handleClient();
+    }
+    delay(10);
+}

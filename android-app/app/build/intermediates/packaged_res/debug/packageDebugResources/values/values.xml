@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#0F1117</color>
+    <string name="app_name">Batch Loader</string>
+    <style name="Theme.BatchLoader" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#4F8CFF</item>
+        <item name="colorPrimaryDark">#0F1117</item>
+        <item name="colorAccent">#36D399</item>
+        <item name="android:statusBarColor">#0F1117</item>
+        <item name="android:navigationBarColor">#1A1D27</item>
+        <item name="android:windowBackground">#0F1117</item>
+    </style>
+</resources>

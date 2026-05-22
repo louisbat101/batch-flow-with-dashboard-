@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Batch Flow Controller</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌊 Batch Flow Controller</h1>
+            <div class="status-bar">
+                <span id="connection-status">Connecting...</span>
+                <span id="system-status">Loading...</span>
+            </div>
+        </header>
+
+        <div class="grid">
+            <!-- Status Panel -->
+            <div class="card">
+                <h2>📊 Live Status</h2>
+                <div class="status-grid">
+                    <div class="status-item">
+                        <label>Flow Reading:</label>
+                        <span id="flow-reading">0.000 L</span>
+                    </div>
+                    <div class="status-item">
+                        <label>Hall A Pulses:</label>
+                        <span id="hall-a-pulses">0</span>
+                    </div>
+                    <div class="status-item">
+                        <label>Hall B Pulses:</label>
+                        <span id="hall-b-pulses">0</span>
+                    </div>
+                    <div class="status-item">
+                        <label>Total Pulses:</label>
+                        <span id="total-pulses">0</span>
+                    </div>
+                    <div class="status-item">
+                        <label>Valve 1:</label>
+                        <span id="valve1-status" class="valve-status">CLOSED</span>
+                    </div>
+                    <div class="status-item">
+                        <label>Valve 2:</label>
+                        <span id="valve2-status" class="valve-status">CLOSED</span>
+                    </div>
+                    <div class="status-item">
+                        <label>State:</label>
+                        <span id="batch-state">IDLE</span>
+                    </div>
+                    <div class="status-item">
+                        <label>Calibration:</label>
+                        <span id="calibration-value">450.0 p/L</span>
+                    </div>
+                    <div class="status-item" id="progress-container" style="display: none;">
+                        <label>Progress:</label>
+                        <div class="progress-bar">
+                            <div id="progress-fill" class="progress-fill"></div>
+                        </div>
+                        <span id="progress-text">0%</span>
+                    </div>
+                </div>
+                <button id="emergency-stop" class="btn btn-danger" style="margin-top: 1rem;">🛑 EMERGENCY STOP</button>
+            </div>
+
+            <!-- Quick Batch -->
+            <div class="card">
+                <h2>🚀 Quick Batch</h2>
+                <div class="form-group">
+                    <label for="manual-valve">Valve:</label>
+                    <select id="manual-valve">
+                        <option value="1">Valve 1</option>
+                        <option value="2">Valve 2</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="manual-litres">Target (Litres):</label>
+                    <input type="number" id="manual-litres" step="0.1" min="0.1" max="100" value="1.0">
+                </div>
+                <button id="start-manual" class="btn btn-primary">Start Manual Batch</button>
+            </div>
+
+            <!-- Products -->
+            <div class="card">
+                <h2>📦 Products</h2>
+                <div id="products-list" class="products-list">
+                    <!-- Products loaded dynamically -->
+                </div>
+                <button id="add-product-btn" class="btn btn-secondary">+ Add Product</button>
+            </div>
+        </div>
+
+        <!-- Add/Edit Product Modal -->
+        <div id="product-modal" class="modal">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h2 id="modal-title">Add Product</h2>
+                <form id="product-form">
+                    <div class="form-group">
+                        <label for="product-name">Name:</label>
+                        <input type="text" id="product-name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="product-target">Target Litres:</label>
+                        <input type="number" id="product-target" step="0.1" min="0.1" max="100" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="product-valve">Valve:</label>
+                        <select id="product-valve">
+                            <option value="1">Valve 1</option>
+                            <option value="2">Valve 2</option>
+                        </select>
+                    </div>
+                    <h3>Advanced Settings</h3>
+                    <div class="form-group">
+                        <label for="product-calibration">Flow Calibration (pulses/L):</label>
+                        <input type="number" id="product-calibration" step="0.1" min="1" value="450">
+                    </div>
+                    <div class="form-group">
+                        <label for="product-closetime">Valve Close Time (ms):</label>
+                        <input type="number" id="product-closetime" min="0" max="5000" value="500">
+                    </div>
+                    <div class="modal-buttons">
+                        <button type="submit" class="btn btn-primary">Save</button>
+                        <button type="button" id="cancel-product" class="btn btn-secondary">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Messages -->
+        <div id="messages" class="messages"></div>
+    </div>
+
+    <script src="/app.js"></script>
+</body>
+</html>
