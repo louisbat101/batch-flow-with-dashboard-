@@ -1,0 +1,524 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ArduinoJson.h>
+#include <SPIFFS.h>
+#include "config.h"
+#include "modbus_master.h"
+
+const char* AP_SSID = "BatchFlow-Master";
+const char* AP_PASS = "batchflow123";
+
+// ── Data structures ────────────────────────────────────────────────
+struct Product {
+  char name[32];
+  float ppl;   // pulses per litre
+  float ppg;   // pulses per gallon
+  int closeTime; // seconds for valve to fully close
+};
+
+struct LoadStation {
+  int  prodIdx;   // -1 = not set
+  float amount;   // target amount in selected unit
+  int  seqOrder;  // 0 = not in sequence, 1-10 = sequence position
+};
+
+// ── Run-time state per station ─────────────────────────────────────
+struct StationState {
+  bool   active;
+  bool   done;
+  float  dispensed;   // will come from slave via RS-485
+  unsigned long startMs;
+  float  flowRate;    // units per second (calculated from pulses)
+};
+
+// ── Slave status tracking ──────────────────────────────────────────
+struct SlaveStatus {
+  bool     online;
+  uint32_t lastSeen;
+  uint32_t pulseCount;
+  bool     valveOpen;
+};
+
+// ── Globals ────────────────────────────────────────────────────────
+Product      products[50];
+int          productCount = 0;
+int          currentUnit  = 0;   // 0=L 1=G
+
+LoadStation  loadStations[10];
+bool         loadPrepared = false;
+
+StationState stState[10];
+SlaveStatus  slaveStatus[11];  // Index 0 unused, 1-10 for slave addresses
+bool         runActive   = false;
+int          runMode     = 0;    // 0=one-by-one  1=sequence
+int          seqStep     = 0;    // current step index in sequence run
+int          seqOrder[10];       // seqOrder[step] = stationIdx (0-based)
+int          seqLen      = 0;
+
+WebServer server(80);
+
+unsigned long lastPollMs = 0;
+const unsigned long POLL_INTERVAL_MS = 100;  // Poll one slave every 100ms (all 10 slaves in 1 second)
+uint8_t currentPollAddr = MIN_SLAVE_ADDR;  // Track which slave to poll next
+
+// ── RS-485 Slave Polling ───────────────────────────────────────────
+void pollSlaves() {
+  // Poll only ONE slave per call to avoid blocking
+  uint16_t regs[4];
+  // Read registers: [0]=status, [1]=pulse_count_high, [2]=pulse_count_low, [3]=valve_state
+  bool success = ModbusMaster::readRegisters(currentPollAddr, 0, 4, regs);
+  
+  if (success) {
+    slaveStatus[currentPollAddr].online = true;
+    slaveStatus[currentPollAddr].lastSeen = millis();
+    slaveStatus[currentPollAddr].pulseCount = ((uint32_t)regs[1] << 16) | regs[2];
+    slaveStatus[currentPollAddr].valveOpen = (regs[3] == 1);
+    
+    Serial.printf("[Poll] Slave %u: Online, Pulses=%lu, Valve=%s\n", 
+      currentPollAddr, slaveStatus[currentPollAddr].pulseCount, 
+      slaveStatus[currentPollAddr].valveOpen ? "OPEN" : "CLOSED");
+  } else {
+    // Mark offline if not seen for 5 seconds
+    if (millis() - slaveStatus[currentPollAddr].lastSeen > 5000) {
+      slaveStatus[currentPollAddr].online = false;
+    }
+  }
+  
+  // Move to next slave address
+  currentPollAddr++;
+  if (currentPollAddr > MAX_SLAVE_ADDR) {
+    currentPollAddr = MIN_SLAVE_ADDR;
+  }
+}
+
+// ── Helpers ────────────────────────────────────────────────────────
+float targetPulses(int stIdx) {
+  int pi = loadStations[stIdx].prodIdx;
+  if (pi < 0 || pi >= productCount) return 0;
+  float pp = (currentUnit == 0) ? products[pi].ppl : products[pi].ppg;
+  return loadStations[stIdx].amount * pp;
+}
+
+void startStation(int stIdx) {
+  stState[stIdx].active    = true;
+  stState[stIdx].done      = false;
+  stState[stIdx].dispensed = 0;
+  stState[stIdx].startMs   = millis();
+  stState[stIdx].flowRate  = 0.5f; // placeholder until real flowmeter
+  Serial.printf("[RUN] Station %d START\n", stIdx + 1);
+}
+
+void stopStation(int stIdx) {
+  stState[stIdx].active = false;
+  stState[stIdx].done   = true;
+  Serial.printf("[RUN] Station %d STOP\n", stIdx + 1);
+}
+
+// ── Main HTML page – serve from SPIFFS ────────────────────────────
+void handleRoot() {
+  // Try to serve index.html from /www/ directory in SPIFFS
+  if (SPIFFS.exists("/www/index.html")) {
+    File f = SPIFFS.open("/www/index.html", "r");
+    if (f) {
+      // Disable caching for development
+      server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      server.sendHeader("Pragma", "no-cache");
+      server.sendHeader("Expires", "0");
+      
+      server.streamFile(f, "text/html");
+      f.close();
+      return;
+    }
+  }
+  
+  // Fallback: serve from root if /www/ doesn't exist
+  if (SPIFFS.exists("/index.html")) {
+    File f = SPIFFS.open("/index.html", "r");
+    if (f) {
+      server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      server.sendHeader("Pragma", "no-cache");
+      server.sendHeader("Expires", "0");
+      
+      server.streamFile(f, "text/html");
+      f.close();
+      return;
+    }
+  }
+  
+  // Last resort: simple fallback page
+  String fallback = "<!DOCTYPE html><html><head><title>BatchFlow Master</title></head><body>"
+    "<h1>BatchFlow Master</h1>"
+    "<p>Served from: 192.168.4.1</p>"
+    "<p><a href='/api/products'>API: Products</a></p>"
+    "</body></html>";
+  server.send(200, "text/html", fallback);
+}
+
+// ── Static file handler for CSS, JS ────────────────────────────────
+void handleStaticFile() {
+  String path = server.uri();
+  
+  // Try /www/ first
+  String fullPath = "/www" + path;
+  if (SPIFFS.exists(fullPath)) {
+    File f = SPIFFS.open(fullPath, "r");
+    if (f) {
+      String contentType = "text/plain";
+      if (path.endsWith(".html")) contentType = "text/html";
+      else if (path.endsWith(".css")) contentType = "text/css";
+      else if (path.endsWith(".js")) contentType = "application/javascript";
+      else if (path.endsWith(".json")) contentType = "application/json";
+      
+      // Disable caching for development
+      server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      server.sendHeader("Pragma", "no-cache");
+      server.sendHeader("Expires", "0");
+      
+      server.streamFile(f, contentType);
+      f.close();
+      return;
+    }
+  }
+  
+  // Try root
+  if (SPIFFS.exists(path)) {
+    File f = SPIFFS.open(path, "r");
+    if (f) {
+      String contentType = "text/plain";
+      if (path.endsWith(".html")) contentType = "text/html";
+      else if (path.endsWith(".css")) contentType = "text/css";
+      else if (path.endsWith(".js")) contentType = "application/javascript";
+      else if (path.endsWith(".json")) contentType = "application/json";
+      
+      // Disable caching for development
+      server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      server.sendHeader("Pragma", "no-cache");
+      server.sendHeader("Expires", "0");
+      
+      server.streamFile(f, contentType);
+      f.close();
+      return;
+    }
+  }
+  
+  server.send(404, "text/plain", "File not found");
+}
+
+// ── API: Products ──────────────────────────────────────────────────
+void handleGetProducts() {
+  StaticJsonDocument<4096> doc;
+  JsonArray arr = doc.createNestedArray("products");
+  for (int i = 0; i < productCount; i++) {
+    JsonObject o = arr.createNestedObject();
+    o["name"]      = products[i].name;
+    o["ppl"]       = products[i].ppl;
+    o["ppg"]       = products[i].ppg;
+    o["closeTime"] = products[i].closeTime;
+  }
+  String out; serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
+void handleAddProduct() {
+  if (productCount >= 50) { server.send(400, "text/plain", "Full"); return; }
+  StaticJsonDocument<512> doc;
+  if (deserializeJson(doc, server.arg("plain"))) { server.send(400, "text/plain", "Bad JSON"); return; }
+  strncpy(products[productCount].name, doc["name"] | "?", 31);
+  products[productCount].ppl       = doc["ppl"]       | 1000.0f;
+  products[productCount].ppg       = doc["ppg"]       | 264.0f;
+  products[productCount].closeTime = doc["closeTime"] | 3;
+  productCount++;
+  Serial.printf("[DB] Product #%d: %s\n", productCount, products[productCount-1].name);
+  server.send(200, "text/plain", "OK");
+}
+
+void handleDeleteProduct() {
+  String uri = server.uri();
+  int idx = uri.substring(14).toInt();
+  if (idx >= 0 && idx < productCount) {
+    for (int i = idx; i < productCount - 1; i++) products[i] = products[i+1];
+    productCount--;
+    server.send(200, "text/plain", "Deleted");
+  } else {
+    server.send(404, "text/plain", "Not found");
+  }
+}
+
+// ── API: Load ──────────────────────────────────────────────────────
+void handleSaveLoad() {
+  StaticJsonDocument<1024> doc;
+  if (deserializeJson(doc, server.arg("plain"))) { server.send(400, "text/plain", "Bad JSON"); return; }
+  for (int i = 0; i < 10; i++) { loadStations[i].prodIdx = -1; loadStations[i].amount = 0; loadStations[i].seqOrder = 0; }
+  currentUnit = doc["unit"] | 0;
+  JsonArray arr = doc["stations"].as<JsonArray>();
+  for (JsonObject s : arr) {
+    int st = (int)s["station"] - 1;
+    if (st >= 0 && st < 10) {
+      loadStations[st].prodIdx = s["prodIdx"];
+      loadStations[st].amount  = s["amount"];
+    }
+  }
+  loadPrepared = true;
+  // Reset run state
+  for (int i = 0; i < 10; i++) { stState[i] = {false, false, 0, 0, 0}; }
+  runActive = false;
+  Serial.printf("[LOAD] Prepared, unit=%d\n", currentUnit);
+  server.send(200, "text/plain", "OK");
+}
+
+void handleGetLoad() {
+  StaticJsonDocument<2048> doc;
+  doc["prepared"] = loadPrepared;
+  doc["unit"]     = currentUnit;
+  JsonArray arr   = doc.createNestedArray("stations");
+  int count = 0;
+  for (int i = 0; i < 10; i++) {
+    int pi = loadStations[i].prodIdx;
+    if (pi >= 0 && pi < productCount && loadStations[i].amount > 0) {
+      JsonObject o  = arr.createNestedObject();
+      o["station"]  = i + 1;
+      o["prodIdx"]  = pi;
+      o["prodName"] = products[pi].name;
+      o["amount"]   = loadStations[i].amount;
+      o["seqOrder"] = loadStations[i].seqOrder;
+      count++;
+    }
+  }
+  doc["count"] = count;
+  String out; serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
+// ── API: Sequence ──────────────────────────────────────────────────
+void handleSaveSequence() {
+  StaticJsonDocument<512> doc;
+  if (deserializeJson(doc, server.arg("plain"))) { server.send(400, "text/plain", "Bad JSON"); return; }
+  // Reset sequence orders
+  for (int i = 0; i < 10; i++) loadStations[i].seqOrder = 0;
+  JsonArray arr = doc["sequence"].as<JsonArray>();
+  seqLen = 0;
+  for (JsonObject s : arr) {
+    int st  = (int)s["station"] - 1;
+    int ord = (int)s["order"];
+    if (st >= 0 && st < 10) loadStations[st].seqOrder = ord;
+  }
+  // Build seqOrder array sorted by order value
+  // collect
+  int tmpSt[10], tmpOrd[10]; int n=0;
+  for (int i=0;i<10;i++) {
+    if (loadStations[i].seqOrder > 0 && loadStations[i].prodIdx >= 0) {
+      tmpSt[n] = i; tmpOrd[n] = loadStations[i].seqOrder; n++;
+    }
+  }
+  // bubble sort by order
+  for (int a=0;a<n-1;a++) for (int b=a+1;b<n;b++) if (tmpOrd[b]<tmpOrd[a]) {
+    int t=tmpSt[a];tmpSt[a]=tmpSt[b];tmpSt[b]=t;
+    t=tmpOrd[a];tmpOrd[a]=tmpOrd[b];tmpOrd[b]=t;
+  }
+  seqLen = n;
+  for (int i=0;i<n;i++) seqOrder[i]=tmpSt[i];
+  Serial.printf("[SEQ] Saved %d steps\n", seqLen);
+  server.send(200, "text/plain", "OK");
+}
+
+// ── API: Run status ────────────────────────────────────────────────
+void handleRunStatus() {
+  StaticJsonDocument<2048> doc;
+  doc["active"] = runActive;
+  doc["mode"]   = runMode;
+  JsonArray arr = doc.createNestedArray("stations");
+  for (int i = 0; i < 10; i++) {
+    int pi = loadStations[i].prodIdx;
+    if (pi >= 0 && pi < productCount && loadStations[i].amount > 0) {
+      float tgt = (currentUnit == 0) ? products[pi].ppl : products[pi].ppg;
+      tgt *= loadStations[i].amount;
+      JsonObject o    = arr.createNestedObject();
+      o["station"]    = i + 1;
+      o["active"]     = stState[i].active;
+      o["done"]       = stState[i].done;
+      o["dispensed"]  = stState[i].dispensed;
+      o["target"]     = loadStations[i].amount; // in units (L or G)
+      o["flowRate"]   = stState[i].flowRate;
+    }
+  }
+  String out; serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
+// ── API: Run control ───────────────────────────────────────────────
+void handleRunStart() {
+  StaticJsonDocument<128> doc;
+  deserializeJson(doc, server.arg("plain"));
+  runMode   = doc["mode"] | 0;
+  runActive = true;
+  seqStep   = 0;
+  if (runMode == 0) {
+    // One by one: start ALL active stations simultaneously
+    for (int i = 0; i < 10; i++) {
+      if (loadStations[i].prodIdx >= 0 && loadStations[i].amount > 0) startStation(i);
+    }
+  } else {
+    // Sequence: start only first step
+    if (seqLen > 0) startStation(seqOrder[0]);
+    else { server.send(400, "text/plain", "No sequence"); return; }
+  }
+  Serial.printf("[RUN] Start mode=%d\n", runMode);
+  server.send(200, "text/plain", "OK");
+}
+
+void handleRunStop() {
+  runActive = false;
+  for (int i = 0; i < 10; i++) if (stState[i].active) stopStation(i);
+  Serial.println("[RUN] Stop all");
+  server.send(200, "text/plain", "OK");
+}
+
+void handleStartStation() {
+  StaticJsonDocument<128> doc;
+  deserializeJson(doc, server.arg("plain"));
+  int st = (int)(doc["station"] | 0) - 1;
+  if (st >= 0 && st < 10 && loadStations[st].prodIdx >= 0) {
+    startStation(st); runActive = true;
+    server.send(200, "text/plain", "OK");
+  } else server.send(400, "text/plain", "Invalid");
+}
+
+void handleStopStation() {
+  StaticJsonDocument<128> doc;
+  deserializeJson(doc, server.arg("plain"));
+  int st = (int)(doc["station"] | 0) - 1;
+  if (st >= 0 && st < 10) { stopStation(st); server.send(200, "text/plain", "OK"); }
+  else server.send(400, "text/plain", "Invalid");
+}
+
+// ── Loop: update simulation + sequence logic ───────────────────────
+void updateRun() {
+  if (!runActive) return;
+  unsigned long now = millis();
+  bool anyActive = false;
+
+  for (int i = 0; i < 10; i++) {
+    if (!stState[i].active || stState[i].done) continue;
+    anyActive = true;
+    int pi = loadStations[i].prodIdx;
+    if (pi < 0) continue;
+
+    // Simulate dispensing (replace with real flowmeter read later)
+    float elapsed = (now - stState[i].startMs) / 1000.0f;
+    stState[i].dispensed  = elapsed * stState[i].flowRate;
+    stState[i].flowRate   = 0.5f; // units/sec placeholder
+
+    // Check target reached
+    if (stState[i].dispensed >= loadStations[i].amount) {
+      stState[i].dispensed = loadStations[i].amount;
+      stopStation(i);
+
+      // Sequence mode: advance to next step
+      if (runMode == 1) {
+        seqStep++;
+        if (seqStep < seqLen) {
+          startStation(seqOrder[seqStep]);
+          Serial.printf("[SEQ] Step %d → Station %d\n", seqStep+1, seqOrder[seqStep]+1);
+        } else {
+          runActive = false;
+          Serial.println("[SEQ] Complete!");
+        }
+      }
+    }
+  }
+  // One-by-one: done when all finished
+  if (runMode == 0 && !anyActive) {
+    bool allDone = true;
+    for (int i=0;i<10;i++) {
+      int pi = loadStations[i].prodIdx;
+      if (pi>=0 && loadStations[i].amount>0 && !stState[i].done) { allDone=false; break; }
+    }
+    if (allDone) { runActive=false; Serial.println("[RUN] All done!"); }
+  }
+}
+
+// ── Setup ──────────────────────────────────────────────────────────
+void setup() {
+  Serial.begin(115200);
+  // Wait for USB CDC serial to be ready (ESP32-C3 USB mode)
+  unsigned long t = millis();
+  while (!Serial && millis() - t < 3000);
+  delay(500);
+  Serial.println("\n[Master] Boot");
+  
+  // Initialize RS-485 Modbus Master
+  ModbusMaster::begin();
+  
+  // Initialize slave status
+  for (int i = 0; i <= MAX_SLAVE_ADDR; i++) {
+    slaveStatus[i].online = false;
+    slaveStatus[i].lastSeen = 0;
+    slaveStatus[i].pulseCount = 0;
+    slaveStatus[i].valveOpen = false;
+  }
+  
+  // Initialize SPIFFS for web files
+  if (!SPIFFS.begin(true)) {
+    Serial.println("[ERROR] SPIFFS mount failed!");
+  } else {
+    Serial.println("[SPIFFS] Mounted successfully");
+  }
+  
+  for (int i = 0; i < 10; i++) { loadStations[i].prodIdx = -1; loadStations[i].amount = 0; loadStations[i].seqOrder = 0; }
+  for (int i = 0; i < 10; i++) { stState[i] = {false, false, 0, 0, 0}; }
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  delay(1000);
+  WiFi.mode(WIFI_AP);
+  delay(500);
+  WiFi.setSleep(false);
+  delay(200);
+  WiFi.softAP(AP_SSID, AP_PASS, 6, false, 4);
+  delay(2000);
+  Serial.printf("[WiFi] AP: %s  IP: %s\n", AP_SSID, WiFi.softAPIP().toString().c_str());
+
+  server.on("/",                    HTTP_GET,  handleRoot);
+  server.on("/www/style.css",       HTTP_GET,  handleStaticFile);
+  server.on("/www/dashboard.js",    HTTP_GET,  handleStaticFile);
+  server.on("/www/app.js",          HTTP_GET,  handleStaticFile);
+  server.on("/style.css",           HTTP_GET,  handleStaticFile);
+  server.on("/app.js",              HTTP_GET,  handleStaticFile);
+  server.on("/dashboard.js",        HTTP_GET,  handleStaticFile);
+  server.on("/api/products",        HTTP_GET,  handleGetProducts);
+  server.on("/api/products",        HTTP_POST, handleAddProduct);
+  server.on("/api/load",            HTTP_GET,  handleGetLoad);
+  server.on("/api/load",            HTTP_POST, handleSaveLoad);
+  server.on("/api/run/sequence",    HTTP_POST, handleSaveSequence);
+  server.on("/api/run/status",      HTTP_GET,  handleRunStatus);
+  server.on("/api/run/start",       HTTP_POST, handleRunStart);
+  server.on("/api/run/stop",        HTTP_POST, handleRunStop);
+  server.on("/api/run/start_station", HTTP_POST, handleStartStation);
+  server.on("/api/run/stop_station",  HTTP_POST, handleStopStation);
+  server.onNotFound([]() {
+    String uri = server.uri();
+    // Try to serve static files for unmatched paths
+    if (!uri.startsWith("/api/")) {
+      handleStaticFile();
+      return;
+    }
+    if (uri.startsWith("/api/products/") && server.method() == HTTP_DELETE)
+      handleDeleteProduct();
+    else
+      server.send(404, "text/plain", "Not found");
+  });
+  server.begin();
+  Serial.println("[Master] Ready!");
+  Serial.println("[Master] Starting RS-485 polling...");
+}
+
+void loop() {
+  server.handleClient();
+  updateRun();
+  
+  // Poll slaves periodically
+  if (millis() - lastPollMs >= POLL_INTERVAL_MS) {
+    pollSlaves();
+    lastPollMs = millis();
+  }
+}

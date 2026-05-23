@@ -112,7 +112,6 @@ void setup() {
   }
   
   // Initialize flowmeter
-  FlowMeter::flowmeterInstance = &flowMeter;
   flowMeter.begin();
   
   // Initialize Modbus slave on RS-485
@@ -123,40 +122,37 @@ void setup() {
   Serial.println("║   WiFi + RS-485 + LED + Flowmeter          ║");
   Serial.println("╚════════════════════════════════════════════╝");
 
-  // Disable Bluetooth FIRST
-  Serial.println("[BT] Stopping Bluetooth...");
-  btStop();
-  delay(500);
-  
-  // Disable power saving
-  Serial.println("[WiFi] Disabling sleep mode...");
-  WiFi.setSleep(false);
-  delay(100);
-  
-  // Turn off any existing WiFi
+  // Full WiFi reset sequence for ESP32-C3
+  Serial.println("[WiFi] Resetting WiFi...");
+  WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
-  delay(500);
-  
-  // Now set AP mode
+  delay(1000);
+
+  // Set AP mode FIRST, then disable sleep
   Serial.println("[WiFi] Setting AP mode...");
   WiFi.mode(WIFI_AP);
   delay(500);
-  
+
+  // Disable power saving AFTER mode is set (C3 resets this on mode change)
+  WiFi.setSleep(false);
+  delay(200);
+
   // Configure IP BEFORE starting SoftAP
   Serial.println("[WiFi] Configuring IP...");
   IPAddress local_ip(192, 168, 4, 1);
   IPAddress gateway(192, 168, 4, 1);
   IPAddress subnet(255, 255, 255, 0);
   WiFi.softAPConfig(local_ip, gateway, subnet);
-  delay(200);
-  
-  // Start SoftAP with 8+ char password, channel 1, no hidden, 4 max clients
+  delay(300);
+
+  // Start SoftAP - channel 6 avoids common interference, visible=true
   Serial.println("[WiFi] Starting SoftAP...");
-  bool ok = WiFi.softAP(CONFIG_AP_SSID, CONFIG_AP_PASS, 1, false, 4);
+  bool ok = WiFi.softAP(CONFIG_AP_SSID, CONFIG_AP_PASS, 6, false, 4);
   Serial.printf("[WiFi] softAP result: %s\n", ok ? "SUCCESS" : "FAILED");
-  
-  // Give it time to stabilize
-  delay(2000);
+
+  // Give it time to stabilize and start beaconing
+  delay(3000);
+  Serial.printf("[WiFi] Channel: %d\n", WiFi.channel());
   
   int stations = WiFi.softAPgetStationNum();
   IPAddress ip = WiFi.softAPIP();
@@ -189,6 +185,9 @@ void loop() {
   
   // Flowmeter updates
   flowMeter.update();
+  
+  // Sync flowmeter pulse count to Modbus
+  modbusSlave.setPulseCount(flowMeter.getPulseCount());
   
   // LED status updates
   statusLED.update();

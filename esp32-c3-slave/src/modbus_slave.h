@@ -34,6 +34,7 @@ public:
   ModbusSlave(uint8_t slaveAddr = DEFAULT_SLAVE_ADDR)
     : slaveAddress(slaveAddr), 
       coilState{false, false, false, false},
+      pulseCount(0),
       enabled(false) {}
 
   void begin() {
@@ -99,6 +100,15 @@ public:
     return mask;
   }
 
+  // Set pulse count (called from flowmeter)
+  void setPulseCount(uint32_t count) {
+    pulseCount = count;
+  }
+
+  uint32_t getPulseCount() const {
+    return pulseCount;
+  }
+
   // Debug: print current coil state
   void printStatus() {
     Serial.printf("[MB] Coils: [%s] [%s] [%s] [%s]\n",
@@ -111,6 +121,7 @@ public:
 private:
   uint8_t slaveAddress;
   bool coilState[4];  // Relay 1-4 states
+  uint32_t pulseCount;  // Flowmeter pulse count
   bool enabled;
 
   void processModbusFrame(uint8_t* frame, int frameLen) {
@@ -138,7 +149,8 @@ private:
       case FC_WRITE_COILS:
         responseLen = handleWriteCoils(frame, response);
         break;
-      case FC_READ_INPUT_REGS:
+      case FC_READ_REGS:  // 0x03 - Read holding registers (treat same as input regs)
+      case FC_READ_INPUT_REGS:  // 0x04 - Read input registers
         responseLen = handleReadInputRegs(frame, response);
         break;
       default:
@@ -227,21 +239,39 @@ private:
   }
 
   int handleReadInputRegs(uint8_t* frame, uint8_t* response) {
-    // FC 0x04: Read input registers (status, flow count, etc.)
-    // For now, just return zeros as placeholder
-    response[0] = frame[0];
-    response[1] = frame[1];
-    response[2] = 4;  // Byte count (2 registers * 2 bytes)
-    response[3] = 0x00;
-    response[4] = 0x00;
-    response[5] = 0x00;
-    response[6] = 0x00;
+    // FC 0x03/0x04: Read holding/input registers
+    // Register map:
+    //   Reg 0: Status (bit 0 = valve open)
+    //   Reg 1: Pulse count high word
+    //   Reg 2: Pulse count low word
+    //   Reg 3: Valve state (1=open, 0=closed)
+    
+    response[0] = frame[0];  // Slave address
+    response[1] = frame[1];  // Function code
+    response[2] = 8;  // Byte count (4 registers * 2 bytes)
+    
+    // Reg 0: Status flags
+    uint16_t status = coilState[0] ? 1 : 0;  // Bit 0 = relay 1 (main valve)
+    response[3] = (status >> 8) & 0xFF;
+    response[4] = status & 0xFF;
+    
+    // Reg 1-2: Pulse count (32-bit split into 2 registers)
+    response[5] = (pulseCount >> 24) & 0xFF;  // High word high byte
+    response[6] = (pulseCount >> 16) & 0xFF;  // High word low byte
+    response[7] = (pulseCount >> 8) & 0xFF;   // Low word high byte
+    response[8] = pulseCount & 0xFF;          // Low word low byte
+    
+    // Reg 3: Valve state (simplified - just return relay 1 state)
+    uint16_t valveState = coilState[0] ? 1 : 0;
+    response[9] = (valveState >> 8) & 0xFF;
+    response[10] = valveState & 0xFF;
 
-    uint16_t crc = calculateCRC(response, 7);
-    response[7] = crc & 0xFF;
-    response[8] = (crc >> 8) & 0xFF;
+    uint16_t crc = calculateCRC(response, 11);
+    response[11] = crc & 0xFF;
+    response[12] = (crc >> 8) & 0xFF;
 
-    return 9;
+    Serial.printf("[MB] Read regs: status=%u pulses=%lu valve=%u\n", status, pulseCount, valveState);
+    return 13;
   }
 
   void sendModbusFrame(uint8_t* frame, int len) {

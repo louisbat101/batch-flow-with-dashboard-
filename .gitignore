@@ -1,0 +1,15 @@
+# PlatformIO build artifacts
+.pio/
+**/.pio/
+
+# Android build
+android-app/build/
+android-app/.gradle/
+*.apk
+*.aab
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
