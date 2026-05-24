@@ -106,29 +106,47 @@ function renderBoardsGrid() {
 }
 
 function refreshBoardStatus() {
-  // In a real system, this would fetch from ESP32 API
-  // For now, we simulate with the mock data
-  // You would call: GET /api/boards to get real data
-  
-  // Uncomment for real API call:
-  /*
+  // Fetch real board status from ESP32 API
   try {
     var r = new XMLHttpRequest();
-    r.open('GET', API + '/api/boards', true);
+    r.open('GET', API + '/api/boards/status', true);
     r.timeout = 3000;
     r.onload = function() {
-      try {
-        var data = JSON.parse(r.responseText);
-        boards = data.boards || boards;
-        statsCounts = data.stats || statsCounts;
-        renderBoardsGrid();
-        updateStats();
-      } catch(e) { console.error('Parse error:', e); }
+      if (r.status === 200) {
+        try {
+          var stations = JSON.parse(r.responseText);
+          
+          // Update boards array from stations
+          boards = stations.map(function(station) {
+            return {
+              id: station.address,
+              name: station.name || ('Station ' + station.address),
+              product: 'Not Assigned', // Will be updated when products are assigned
+              status: station.online ? 'ONLINE' : 'OFFLINE',
+              state: station.online ? 'idle' : 'offline',
+              indicator: station.online ? 'online' : 'offline'
+            };
+          });
+          
+          // Update stats
+          var onlineCount = stations.filter(function(s) { return s.online; }).length;
+          statsCounts.totalBoards = stations.length;
+          statsCounts.onlineCount = onlineCount;
+          
+          renderBoardsGrid();
+          updateStats();
+        } catch(e) { 
+          console.error('Parse error:', e); 
+        }
+      }
     };
-    r.onerror = function() { console.warn('API call failed'); };
+    r.onerror = function() { 
+      console.warn('API call failed'); 
+    };
     r.send();
-  } catch(e) { console.error('Request error:', e); }
-  */
+  } catch(e) { 
+    console.error('Request error:', e); 
+  }
 }
 
 // ── Page Navigation ────────────────────────────────────
@@ -178,20 +196,82 @@ function renderLoadTable() {
   var tbody = document.getElementById('load-table-body');
   if (!tbody) return;
   
+  // Fetch real board status and products
+  fetchBoardsAndRenderLoad();
+}
+
+function fetchBoardsAndRenderLoad() {
+  // Fetch stations
+  var xhr1 = new XMLHttpRequest();
+  xhr1.open('GET', API + '/api/boards/status', true);
+  xhr1.onload = function() {
+    if (xhr1.status === 200) {
+      try {
+        var stations = JSON.parse(xhr1.responseText);
+        
+        // Fetch products
+        var xhr2 = new XMLHttpRequest();
+        xhr2.open('GET', API + '/api/products', true);
+        xhr2.onload = function() {
+          if (xhr2.status === 200) {
+            try {
+              var productsData = JSON.parse(xhr2.responseText);
+              renderLoadTableWithData(stations, productsData);
+            } catch(e) {
+              console.error('Failed to parse products:', e);
+            }
+          }
+        };
+        xhr2.send();
+        
+      } catch(e) {
+        console.error('Failed to parse stations:', e);
+      }
+    }
+  };
+  xhr1.send();
+}
+
+function renderLoadTableWithData(stations, productsData) {
+  var tbody = document.getElementById('load-table-body');
+  if (!tbody) return;
+  
   tbody.innerHTML = '';
+  
+  // Initialize loadData from stations if empty
+  if (loadData.length === 0) {
+    stations.forEach(function(station) {
+      loadData.push({
+        address: station.address,
+        stationName: station.name || ('Station ' + station.address),
+        product: productsData.length > 0 ? productsData[0].name : '',
+        productId: productsData.length > 0 ? productsData[0].id : 0,
+        amount: 0
+      });
+    });
+  }
   
   loadData.forEach(function(load, index) {
     var tr = document.createElement('tr');
     
-    var productOptions = products.map(function(p) {
-      return '<option value="' + p.name + '"' + (p.name === load.product ? ' selected' : '') + '>' + p.name + '</option>';
-    }).join('');
+    // Build product dropdown with IDs
+    var productOptions = '<option value="">-- Select Product --</option>';
+    productsData.forEach(function(p) {
+      var selected = (p.id === load.productId) ? ' selected' : '';
+      productOptions += '<option value="' + p.id + '"' + selected + '>' + p.name + '</option>';
+    });
+    
+    // Station status indicator
+    var station = stations.find(function(s) { return s.address === load.address; });
+    var statusBadge = station && station.online 
+      ? '<span class="status-online">●</span>' 
+      : '<span class="status-offline">●</span>';
     
     tr.innerHTML = 
       '<td class="load-address-cell">' + load.address + '</td>' +
-      '<td><input type="text" value="' + (load.stationName || '') + '" onchange="updateLoadStationName(' + index + ', this.value)" /></td>' +
-      '<td><select onchange="updateLoadProduct(' + index + ', this.value)">' + productOptions + '</select></td>' +
-      '<td><input type="number" step="0.1" value="' + load.amount.toFixed(2) + '" onchange="updateLoadAmount(' + index + ', this.value)" /></td>' +
+      '<td>' + statusBadge + ' ' + (load.stationName || '') + '</td>' +
+      '<td><select onchange="updateLoadProduct(' + index + ', this.value, ' + JSON.stringify(productsData).replace(/"/g, '&quot;') + ')">' + productOptions + '</select></td>' +
+      '<td><input type="number" step="0.1" min="0" value="' + (load.amount || 0) + '" onchange="updateLoadAmount(' + index + ', this.value)" placeholder="0.0" /></td>' +
       '<td><button class="btn-remove" onclick="removeLoad(' + index + ')">✕</button></td>';
     
     tbody.appendChild(tr);
@@ -204,9 +284,16 @@ function updateLoadStationName(index, value) {
   }
 }
 
-function updateLoadProduct(index, value) {
+function updateLoadProduct(index, productId, productsData) {
   if (loadData[index]) {
-    loadData[index].product = value;
+    var pid = parseInt(productId);
+    loadData[index].productId = pid;
+    
+    // Find product name from ID
+    var product = productsData.find(function(p) { return p.id === pid; });
+    if (product) {
+      loadData[index].product = product.name;
+    }
   }
 }
 
@@ -290,24 +377,42 @@ function saveRenameBoard() {
     return;
   }
   
-  // Find and update the board
-  for (var i = 0; i < boards.length; i++) {
-    if (boards[i].id === currentEditingBoard.id) {
-      boards[i].name = newName;
-      break;
+  // Call the actual API to rename station
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', API + '/api/boards/rename', true);
+  xhr.setRequestHeader('Content-Type', 'application/json');
+  xhr.onload = function() {
+    if (xhr.status === 200) {
+      // Update local board data
+      for (var i = 0; i < boards.length; i++) {
+        if (boards[i].id === currentEditingBoard.id) {
+          boards[i].name = newName;
+          break;
+        }
+      }
+      
+      renderBoardsGrid();
+      if (document.getElementById('page-boards').classList.contains('active')) {
+        renderBoardsManagement();
+      }
+      
+      closeRenameModal();
+      alert('Station renamed successfully to: ' + newName);
+      
+      // Refresh board status to get updated names
+      refreshBoardStatus();
+    } else {
+      alert('Failed to rename station: ' + xhr.responseText);
     }
-  }
+  };
+  xhr.onerror = function() {
+    alert('Error connecting to server');
+  };
   
-  // In real system, would send to API:
-  // POST /api/boards/{id}/rename with {name: newName}
-  
-  renderBoardsGrid();
-  if (document.getElementById('page-boards').classList.contains('active')) {
-    renderBoardsManagement();
-  }
-  
-  closeRenameModal();
-  alert('Board renamed to: ' + newName);
+  xhr.send(JSON.stringify({
+    address: currentEditingBoard.id,
+    name: newName
+  }));
 }
 
 function deleteBoard(boardId) {

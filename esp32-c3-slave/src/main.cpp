@@ -33,16 +33,94 @@ static void setRelay(uint8_t ch, bool on) {
 }
 
 void handleRoot() {
-  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>FlowNode</title><style>body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;align-items:center;justify-content:center;margin:0}.container{background:white;padding:40px;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:500px}h1{text-align:center;margin-top:0}button{padding:15px;margin:5px;border:none;border-radius:6px;cursor:pointer;font-weight:600;width:48%;font-size:14px}.on{background:#4CAF50;color:white}.off{background:#f44336;color:white}.full{width:100%}</style></head><body><div class='container'><h1>🌊 FlowNode Relay Control</h1>";
+  uint8_t currentAddr = modbusSlave.getSlaveAddress();
+  uint32_t pulses = flowMeter.getPulseCount();
+  
+  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<title>FlowNode</title>";
+  html += "<style>";
+  html += "body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;align-items:center;justify-content:center;margin:0;padding:20px}";
+  html += ".container{background:white;padding:30px;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:500px;width:100%}";
+  html += "h1{text-align:center;margin-top:0;font-size:28px}";
+  html += ".status-card{background:#f5f5f5;padding:15px;border-radius:8px;margin-bottom:20px}";
+  html += ".status-row{display:flex;justify-content:space-between;margin:8px 0}";
+  html += ".label{font-weight:600;color:#666}";
+  html += ".value{color:#333}";
+  html += ".badge{display:inline-block;padding:4px 12px;border-radius:12px;font-size:12px;font-weight:600}";
+  html += ".badge-success{background:#4CAF50;color:white}";
+  html += ".badge-warning{background:#ff9800;color:white}";
+  html += ".section-title{font-size:18px;font-weight:600;margin:20px 0 10px;color:#333}";
+  html += "button{padding:15px;margin:5px;border:none;border-radius:6px;cursor:pointer;font-weight:600;width:48%;font-size:14px}";
+  html += ".on{background:#4CAF50;color:white}.off{background:#f44336;color:white}";
+  html += ".full{width:100%}";
+  html += "select,input{width:100%;padding:12px;border:2px solid #ddd;border-radius:6px;font-size:16px;margin:10px 0}";
+  html += ".btn-primary{background:#667eea;color:white;width:100%;padding:15px;border:none;border-radius:6px;font-size:16px;font-weight:600;cursor:pointer}";
+  html += "</style></head><body><div class='container'>";
+  html += "<h1>🌊 FlowNode Control</h1>";
+  
+  // Status Card
+  html += "<div class='status-card'>";
+  html += "<div class='status-row'><span class='label'>Slave Address:</span><span class='value'><span class='badge badge-success'>" + String(currentAddr) + "</span></span></div>";
+  html += "<div class='status-row'><span class='label'>RS-485 Status:</span><span class='value'><span class='badge badge-success'>READY</span></span></div>";
+  html += "<div class='status-row'><span class='label'>Pulse Count:</span><span class='value'>" + String(pulses) + "</span></div>";
+  html += "<div class='status-row'><span class='label'>IP Address:</span><span class='value'>192.168.5.1</span></div>";
+  html += "</div>";
+  
+  // Address Configuration
+  html += "<div class='section-title'>⚙️ Configuration</div>";
+  html += "<form action='/config' method='POST'>";
+  html += "<select name='address'>";
+  for(int i=1; i<=10; i++) {
+    html += "<option value='" + String(i) + "'";
+    if(i == currentAddr) html += " selected";
+    html += ">Slave Address " + String(i) + "</option>";
+  }
+  html += "</select>";
+  html += "<button type='submit' class='btn-primary'>💾 Save Address & Restart</button>";
+  html += "</form>";
+  
+  // Relay Control
+  html += "<div class='section-title'>🔌 Relay Control</div>";
   html += "<div>";
   for(int i=1; i<=4; i++) {
-    html += "<button class='on' onclick=\"fetch('/relay/" + String(i) + "/on')\">Relay " + String(i) + " ON</button>";
-    html += "<button class='off' onclick=\"fetch('/relay/" + String(i) + "/off')\">Relay " + String(i) + " OFF</button>";
+    html += "<button class='on' onclick=\"fetch('/relay/" + String(i) + "/on').then(()=>setTimeout(()=>location.reload(),100))\">Relay " + String(i) + " ON</button>";
+    html += "<button class='off' onclick=\"fetch('/relay/" + String(i) + "/off').then(()=>setTimeout(()=>location.reload(),100))\">Relay " + String(i) + " OFF</button>";
   }
-  html += "<br><button class='full on' onclick=\"fetch('/all/on')\">ALL ON</button>";
-  html += "<button class='full off' onclick=\"fetch('/all/off')\">ALL OFF</button>";
+  html += "<br><button class='full on' onclick=\"fetch('/all/on').then(()=>setTimeout(()=>location.reload(),100))\">ALL ON</button>";
+  html += "<button class='full off' onclick=\"fetch('/all/off').then(()=>setTimeout(()=>location.reload(),100))\">ALL OFF</button>";
   html += "</div></div></body></html>";
   server.send(200, "text/html", html);
+}
+
+void handleConfig() {
+  if (server.method() == HTTP_POST) {
+    String newAddrStr = server.arg("address");
+    uint8_t newAddr = newAddrStr.toInt();
+    
+    if (newAddr >= MIN_SLAVE_ADDR && newAddr <= MAX_SLAVE_ADDR) {
+      // Save to NVS (persistent storage)
+      modbusSlave.setSlaveAddress(newAddr);
+      
+      String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
+      html += "<title>Config Saved</title>";
+      html += "<style>body{font-family:sans-serif;background:#667eea;min-height:100vh;display:flex;align-items:center;justify-content:center;margin:0;padding:20px}";
+      html += ".container{background:white;padding:40px;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:400px;text-align:center}";
+      html += "h1{color:#4CAF50}p{font-size:18px;color:#666}</style></head><body>";
+      html += "<div class='container'><h1>✓ Configuration Saved!</h1>";
+      html += "<p>Slave address changed to <strong>" + String(newAddr) + "</strong></p>";
+      html += "<p>Device will restart in 3 seconds...</p>";
+      html += "<script>setTimeout(()=>{window.location='/'},3000)</script>";
+      html += "</div></body></html>";
+      server.send(200, "text/html", html);
+      
+      delay(3000);
+      ESP.restart();
+    } else {
+      server.send(400, "text/plain", "Invalid address (must be 1-10)");
+    }
+  } else {
+    server.send(405, "text/plain", "Method not allowed");
+  }
 }
 
 void handleRelay() {
@@ -137,17 +215,17 @@ void setup() {
   WiFi.setSleep(false);
   delay(200);
 
-  // Configure IP BEFORE starting SoftAP
+  // Configure IP BEFORE starting SoftAP - Use different IP from master
   Serial.println("[WiFi] Configuring IP...");
-  IPAddress local_ip(192, 168, 4, 1);
-  IPAddress gateway(192, 168, 4, 1);
+  IPAddress local_ip(192, 168, 5, 1);      // Different from master (192.168.4.1)
+  IPAddress gateway(192, 168, 5, 1);
   IPAddress subnet(255, 255, 255, 0);
   WiFi.softAPConfig(local_ip, gateway, subnet);
   delay(300);
 
-  // Start SoftAP - channel 6 avoids common interference, visible=true
+  // Start SoftAP - channel 11 avoids master on channel 6
   Serial.println("[WiFi] Starting SoftAP...");
-  bool ok = WiFi.softAP(CONFIG_AP_SSID, CONFIG_AP_PASS, 6, false, 4);
+  bool ok = WiFi.softAP(CONFIG_AP_SSID, CONFIG_AP_PASS, 11, false, 4);
   Serial.printf("[WiFi] softAP result: %s\n", ok ? "SUCCESS" : "FAILED");
 
   // Give it time to stabilize and start beaconing
@@ -160,6 +238,7 @@ void setup() {
 
   Serial.println("[Server] Registering handlers...");
   server.on("/", handleRoot);
+  server.on("/config", HTTP_POST, handleConfig);
   server.onNotFound([]() {
     if (server.uri().startsWith("/relay/")) handleRelay();
     else if (server.uri() == "/all/on" || server.uri() == "/all/off") handleAll();

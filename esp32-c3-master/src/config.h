@@ -1,29 +1,29 @@
-#pragma o// ── WiFi Configuration ───────────────────────────────
+#pragma once
+
+// ═══════════════════════════════════════════════════════════════════════
+// ESP32-C3 Super Mini Master Controller
+// RS-485 Modbus RTU + WiFi + Product Database
+// ═══════════════════════════════════════════════════════════════════════
+
+// ── WiFi Configuration ───────────────────────────────────
 // Master can connect to WiFi OR run as AP
 // Set WIFI_SSID to empty ("") to skip WiFi connection and just use AP
 #define WIFI_SSID        ""           // Leave empty to skip WiFi connection
 #define WIFI_PASSWORD    ""           // Leave empty to skip WiFi connection
 #define WIFI_AP_SSID     "BatchFlow-Master"
 #define WIFI_AP_PASS     "batchflow123"
-#define WIFI_AP_PORT     80/ ════════// ── Storage (LittleFS) ───────────────────────────────
-#define MAX_PRODUCTS      50
-#define MAX_PRODUCT_NAME  32══════════════════════════════════════════════════════════
-// ESP32-C3 Super Mini Master Controller
-// RS-485 Modbus RTU + WiFi + Product Database
-// ═══════════════════════════════════════════════════════════════════════
-
-// ── WiFi Configuration ───────────────────────────────────
-#define WIFI_SSID        "YourSSID"        // Change to your WiFi SSID
-#define WIFI_PASSWORD    "YourPassword"    // Change to your WiFi password
-#define WIFI_AP_SSID     "BatchFlow-Master"
-#define WIFI_AP_PASS     "batchflow123"
 #define WIFI_AP_PORT     80
 
-// ── RS-485 Pins (ESP32-C3 Super Mini, same as slave) ──────
-#define RS485_RXD_PIN     9       // RXD from MAX485
+// ── RS-485 Pins (ESP32-C3 Super Mini - MASTER CUSTOM BUILD) ──────
+// Master uses YOUR wiring: GPIO9=RX, GPIO20=RD, GPIO21=TX
+#define RS485_RXD_PIN     9       // RXD from MAX485 (custom wiring)
 #define RS485_TXD_PIN     21      // TXD to MAX485
-#define RS485_RD_PIN      20      // RD/RO (receive disable)
+#define RS485_RD_PIN      20      // RD/RO direction control (custom wiring)
 #define RS485_BAUD        9600    // Modbus RTU standard
+
+// ── WS2811/NeoPixel Status LED ──────────────────────────
+#define NEOPIXEL_PIN      4       // GPIO 4 (WS2811 data line, 5V)
+#define NEOPIXEL_COUNT    1       // Single LED
 
 // ── Slave Configuration ──────────────────────────────────
 #define MIN_SLAVE_ADDR    1       // Slave 1

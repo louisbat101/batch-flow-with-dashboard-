@@ -20,12 +20,17 @@
 #define CONFIG_AP_PASS       "flownode123"
 #define CONFIG_AP_PORT       80
 
-// ── RS-485 Pins (ESP32-C3 Super Mini) ──────────────
-// Using GPIO 9 for RXD, GPIO 20/21 for RD/TXD
-// (Avoids USB JTAG pins 3-5 and relay channel pins 5-7,10)
-#define RS485_RXD_PIN     9       // RXD from MAX485
-#define RS485_TXD_PIN     21      // TXD to MAX485
-#define RS485_RD_PIN      20      // RD/RO (receive disable / receive output) from MAX485
+// ── RS-485 Pins (ESP32-C3 Super Mini + ESC3E05 PCB) ──────────────
+// ⚠️ CRITICAL: ESC3E05 PCB silkscreen is WRONG!
+// Documentation says: RD=GPIO9, RXD=GPIO20, TXD=GPIO21
+// ACTUAL working config (verified May 23, 2026):
+//   - GPIO 20 = RX (receives data from RS-485 transceiver)
+//   - GPIO 21 = TX (sends data to RS-485 transceiver)  
+//   - GPIO 9  = RD (direction control DE/RE pins)
+// See RS485_SETUP_GUIDE.md and ESC3E05_PIN_CORRECTION.md for details!
+#define RS485_RXD_PIN     20      // ✅ CORRECT: RX pin (not GPIO9!)
+#define RS485_TXD_PIN     21      // ✅ CORRECT: TX pin
+#define RS485_RD_PIN      9       // ✅ CORRECT: Direction control (not GPIO20!)
 #define RS485_BAUD        9600    // Modbus RTU standard
 
 // ── 4-Channel Relay / Valve Control Pins ────────────

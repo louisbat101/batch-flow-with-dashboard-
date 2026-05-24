@@ -250,6 +250,18 @@ body {
   color: var(--primary);
 }
 
+.status-online {
+  color: var(--accent);
+  font-size: 10px;
+  margin-right: 4px;
+}
+
+.status-offline {
+  color: var(--muted);
+  font-size: 10px;
+  margin-right: 4px;
+}
+
 .load-actions {
   display: flex;
   justify-content: space-between;
@@ -267,6 +279,20 @@ body {
   color: var(--muted);
   font-size: 12px;
   padding: 8px 0;
+}
+
+.no-boards-msg, .error-msg {
+  text-align: center;
+  color: var(--muted);
+  padding: 40px 20px;
+  font-size: 14px;
+  background: var(--card);
+  border-radius: var(--radius);
+  margin: 20px;
+}
+
+.error-msg {
+  color: var(--danger);
 }
 
 .btn-remove {

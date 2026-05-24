@@ -40,9 +40,9 @@ public:
   void begin() {
     Serial1.begin(RS485_BAUD, SERIAL_8N1, RS485_RXD_PIN, RS485_TXD_PIN);
     pinMode(RS485_RD_PIN, OUTPUT);
-    digitalWrite(RS485_RD_PIN, LOW);  // Enable receive mode initially
+    digitalWrite(RS485_RD_PIN, LOW);  // Try LOW = enable both RX and TX
     enabled = true;
-    Serial.printf("[MB] Modbus slave %u on RS485 (GPIO%u RX, GPIO%u TX, GPIO%u RD)\n",
+    Serial.printf("[MB] Modbus slave %u on RS485 (GPIO%u RX, GPIO%u TX, GPIO%u RD=LOW)\n",
                   slaveAddress, RS485_RXD_PIN, RS485_TXD_PIN, RS485_RD_PIN);
   }
 
@@ -71,21 +71,43 @@ public:
 
   // Call in main loop to process incoming Modbus requests
   void update() {
-    if (!enabled || !Serial1.available()) return;
+    if (!enabled) return;
+    
+    if (!Serial1.available()) return;
+
+    // Wait a bit for the full frame to arrive (Modbus RTU inter-frame gap)
+    delay(5);  // Wait 5ms for complete frame at 9600 baud
+    
+    // DEBUG: Show we got something
+    int avail = Serial1.available();
+    Serial.printf("[MB] RX: %d bytes available\n", avail);
 
     // Read incoming frame
     uint8_t frame[256];
     int frameLen = 0;
-    unsigned long timeout = millis() + 100;  // 100ms timeout
+    unsigned long timeout = millis() + 50;  // 50ms timeout to read all bytes
 
     while (Serial1.available() && millis() < timeout && frameLen < 256) {
       frame[frameLen++] = Serial1.read();
+      // No delay between bytes - read as fast as possible
     }
 
-    if (frameLen < 4) return;  // Minimum valid frame
+    Serial.printf("[MB] RX frame: %d bytes - ", frameLen);
+    for (int i = 0; i < frameLen && i < 16; i++) {
+      Serial.printf("%02X ", frame[i]);
+    }
+    Serial.println();
+
+    if (frameLen < 4) {
+      Serial.println("[MB] Frame too short, ignoring");
+      return;  // Minimum valid frame
+    }
 
     // Check slave address
-    if (frame[0] != slaveAddress) return;
+    if (frame[0] != slaveAddress) {
+      Serial.printf("[MB] Wrong address: got %u, expected %u\n", frame[0], slaveAddress);
+      return;
+    }
 
     // Parse and respond
     processModbusFrame(frame, frameLen);
@@ -127,8 +149,8 @@ private:
   void processModbusFrame(uint8_t* frame, int frameLen) {
     uint8_t funcCode = frame[1];
     
-    // CRC check (simplified - check last 2 bytes)
-    uint16_t crcRx = (frame[frameLen-2] << 8) | frame[frameLen-1];
+    // CRC check - Modbus CRC is LITTLE-ENDIAN (low byte first)
+    uint16_t crcRx = frame[frameLen-1] << 8 | frame[frameLen-2];  // Swap byte order!
     uint16_t crcCalc = calculateCRC(frame, frameLen - 2);
     
     if (crcRx != crcCalc) {
@@ -275,16 +297,25 @@ private:
   }
 
   void sendModbusFrame(uint8_t* frame, int len) {
-    digitalWrite(RS485_RD_PIN, HIGH);  // Enable transmit mode
-    delayMicroseconds(100);
+    Serial.printf("[MB] Sending %d bytes: ", len);
+    for (int i = 0; i < len && i < 16; i++) {
+      Serial.printf("%02X ", frame[i]);
+    }
+    Serial.println();
+
+    // Set RD pin HIGH for transmit mode
+    digitalWrite(RS485_RD_PIN, HIGH);
+    delayMicroseconds(100);  // Small delay before TX
 
     Serial1.write(frame, len);
     Serial1.flush();
 
-    delayMicroseconds(100);
-    digitalWrite(RS485_RD_PIN, LOW);   // Return to receive mode
+    delayMicroseconds(100);  // Small delay after TX
+    
+    // Set RD pin back LOW for receive mode
+    digitalWrite(RS485_RD_PIN, LOW);
 
-    Serial.printf("[MB] Sent frame: %d bytes\n", len);
+    Serial.printf("[MB] TX complete\n");
   }
 
   uint16_t calculateCRC(uint8_t* frame, int len) {

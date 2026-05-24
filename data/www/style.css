@@ -250,6 +250,18 @@ body {
   color: var(--primary);
 }
 
+.status-online {
+  color: var(--accent);
+  font-size: 10px;
+  margin-right: 4px;
+}
+
+.status-offline {
+  color: var(--muted);
+  font-size: 10px;
+  margin-right: 4px;
+}
+
 .load-actions {
   display: flex;
   justify-content: space-between;

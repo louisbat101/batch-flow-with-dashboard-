@@ -46,9 +46,12 @@ public:
     request[7] = (crc >> 8) & 0xFF;
 
     digitalWrite(RS485_RD_PIN, HIGH);  // TX mode
+    delayMicroseconds(500);  // Wait for transceiver to switch to TX
     Serial1.write(request, 8);
     Serial1.flush();
+    delayMicroseconds(500);  // Wait for all bytes to transmit
     digitalWrite(RS485_RD_PIN, LOW);   // RX mode
+    delayMicroseconds(100);  // Wait for transceiver to switch to RX
 
     Serial.printf("[Modbus] TX: Addr=%u Fn=0x05 Coil=%u Value=%u\n", slaveAddr, coilAddr, state);
 
@@ -96,9 +99,12 @@ public:
     request[7] = (crc >> 8) & 0xFF;
 
     digitalWrite(RS485_RD_PIN, HIGH);  // TX mode
+    delayMicroseconds(500);  // Wait for transceiver to switch to TX
     Serial1.write(request, 8);
     Serial1.flush();
+    delayMicroseconds(500);  // Wait for all bytes to transmit
     digitalWrite(RS485_RD_PIN, LOW);   // RX mode
+    delayMicroseconds(100);  // Wait for transceiver to switch to RX
 
     Serial.printf("[Modbus] TX: Addr=%u Fn=0x03 Reg=%u Count=%u\n", slaveAddr, startReg, count);
 

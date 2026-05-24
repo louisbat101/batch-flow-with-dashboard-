@@ -4,10 +4,14 @@
 #include <ArduinoJson.h>
 #include <SPIFFS.h>
 #include "config.h"
-#include "modbus_master.h"
+#include "modbus_master_lib.h"  // Using library-based ModbusMaster
+#include "neopixel_led.h"
 
 const char* AP_SSID = "BatchFlow-Master";
 const char* AP_PASS = "batchflow123";
+
+// ── LED Controller ─────────────────────────────────────────────────
+NeoPixelLED statusLED;
 
 // ── Data structures ────────────────────────────────────────────────
 struct Product {
@@ -38,6 +42,7 @@ struct SlaveStatus {
   uint32_t lastSeen;
   uint32_t pulseCount;
   bool     valveOpen;
+  char     stationName[32];  // User-defined station name (e.g., "Acid", "Caustic")
 };
 
 // ── Globals ────────────────────────────────────────────────────────
@@ -50,6 +55,11 @@ bool         loadPrepared = false;
 
 StationState stState[10];
 SlaveStatus  slaveStatus[11];  // Index 0 unused, 1-10 for slave addresses
+                                 // ⚠️  CRITICAL SAFETY: Addresses are FIXED!
+                                 //    Address 1 = Station 1 (always)
+                                 //    Address 2 = Station 2 (always)
+                                 //    ...etc. NEVER reorder or shift!
+                                 //    If offline, position remains reserved.
 bool         runActive   = false;
 int          runMode     = 0;    // 0=one-by-one  1=sequence
 int          seqStep     = 0;    // current step index in sequence run
@@ -67,7 +77,9 @@ void pollSlaves() {
   // Poll only ONE slave per call to avoid blocking
   uint16_t regs[4];
   // Read registers: [0]=status, [1]=pulse_count_high, [2]=pulse_count_low, [3]=valve_state
-  bool success = ModbusMaster::readRegisters(currentPollAddr, 0, 4, regs);
+  
+  Serial.printf("[Poll] Checking slave %u...\n", currentPollAddr);
+  bool success = ModbusMasterLib::readRegisters(currentPollAddr, 0, 4, regs);
   
   if (success) {
     slaveStatus[currentPollAddr].online = true;
@@ -75,13 +87,19 @@ void pollSlaves() {
     slaveStatus[currentPollAddr].pulseCount = ((uint32_t)regs[1] << 16) | regs[2];
     slaveStatus[currentPollAddr].valveOpen = (regs[3] == 1);
     
-    Serial.printf("[Poll] Slave %u: Online, Pulses=%lu, Valve=%s\n", 
+    Serial.printf("[Poll] Slave %u: ✓ ONLINE, Pulses=%lu, Valve=%s\n", 
       currentPollAddr, slaveStatus[currentPollAddr].pulseCount, 
       slaveStatus[currentPollAddr].valveOpen ? "OPEN" : "CLOSED");
   } else {
-    // Mark offline if not seen for 5 seconds
-    if (millis() - slaveStatus[currentPollAddr].lastSeen > 5000) {
-      slaveStatus[currentPollAddr].online = false;
+    Serial.printf("[Poll] Slave %u: ✗ NO RESPONSE (lastSeen=%lu ms ago)\n", 
+      currentPollAddr, millis() - slaveStatus[currentPollAddr].lastSeen);
+    
+    // Mark offline if not seen for 15 seconds (was 5s - increased to tolerate web API delays)
+    if (millis() - slaveStatus[currentPollAddr].lastSeen > 15000) {
+      if (slaveStatus[currentPollAddr].online) {
+        slaveStatus[currentPollAddr].online = false;
+        Serial.printf("[Poll] Slave %u: MARKED OFFLINE\n", currentPollAddr);
+      }
     }
   }
   
@@ -346,6 +364,65 @@ void handleRunStatus() {
   server.send(200, "application/json", out);
 }
 
+// ── API: Get boards/slaves status ──────────────────────────────────
+void handleBoardsStatus() {
+  StaticJsonDocument<2048> doc;
+  JsonArray boards = doc.createNestedArray("boards");
+  
+  // ⚠️  CRITICAL SAFETY: Always show ALL 10 slots (addresses 1-10)
+  //    Addresses are FIXED and NEVER reordered or shifted!
+  //    If a board is offline, its slot shows OFFLINE status.
+  //    This prevents confusion in chemical dispensing systems.
+  for (int i = MIN_SLAVE_ADDR; i <= MAX_SLAVE_ADDR; i++) {
+    JsonObject board = boards.createNestedObject();
+    board["address"] = i;  // Address is FIXED (1-10)
+    board["online"] = slaveStatus[i].online;
+    board["pulseCount"] = slaveStatus[i].pulseCount;
+    board["valveOpen"] = slaveStatus[i].valveOpen;
+    board["lastSeen"] = slaveStatus[i].lastSeen;
+    
+    // Use custom station name if set, otherwise default to "Station N"
+    if (strlen(slaveStatus[i].stationName) > 0) {
+      board["name"] = slaveStatus[i].stationName;
+    } else {
+      char defaultName[32];
+      snprintf(defaultName, sizeof(defaultName), "Station %d", i);
+      board["name"] = defaultName;
+    }
+  }
+  
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
+// ── API: Rename Station (set custom name) ──────────────────────────
+void handleRenameStation() {
+  StaticJsonDocument<256> doc;
+  if (deserializeJson(doc, server.arg("plain"))) {
+    server.send(400, "text/plain", "Bad JSON");
+    return;
+  }
+  
+  int address = doc["address"] | 0;
+  const char* newName = doc["name"] | "";
+  
+  // Validate address is in range 1-10
+  if (address < MIN_SLAVE_ADDR || address > MAX_SLAVE_ADDR) {
+    server.send(400, "text/plain", "Invalid address (must be 1-10)");
+    return;
+  }
+  
+  // Update station name (empty string resets to default)
+  strncpy(slaveStatus[address].stationName, newName, 31);
+  slaveStatus[address].stationName[31] = '\0';
+  
+  Serial.printf("[Station] Address %d renamed to: %s\n", address, 
+                strlen(newName) > 0 ? newName : "(default)");
+  
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
 // ── API: Run control ───────────────────────────────────────────────
 void handleRunStart() {
   StaticJsonDocument<128> doc;
@@ -447,15 +524,20 @@ void setup() {
   delay(500);
   Serial.println("\n[Master] Boot");
   
-  // Initialize RS-485 Modbus Master
-  ModbusMaster::begin();
+  // Initialize NeoPixel LED
+  statusLED.begin();
+  statusLED.setBlinking(NeoPixelLED::COLOR_BOOT, 200);  // White blinking while booting
   
-  // Initialize slave status
+  // Initialize RS-485 Modbus Master with library
+  ModbusMasterLib::begin();
+  
+  // Initialize slave status - ⚠️  CRITICAL SAFETY: Addresses 1-10 are FIXED!
   for (int i = 0; i <= MAX_SLAVE_ADDR; i++) {
     slaveStatus[i].online = false;
     slaveStatus[i].lastSeen = 0;
     slaveStatus[i].pulseCount = 0;
     slaveStatus[i].valveOpen = false;
+    slaveStatus[i].stationName[0] = '\0';  // Empty = use default "Station N"
   }
   
   // Initialize SPIFFS for web files
@@ -464,6 +546,30 @@ void setup() {
   } else {
     Serial.println("[SPIFFS] Mounted successfully");
   }
+  
+  // Initialize default products (for testing)
+  strncpy(products[0].name, "Acid", 31);
+  products[0].ppl = 450.0f;
+  products[0].ppg = 118.9f;
+  products[0].closeTime = 0.25f;
+  
+  strncpy(products[1].name, "Caustic", 31);
+  products[1].ppl = 375.0f;
+  products[1].ppg = 99.1f;
+  products[1].closeTime = 0.30f;
+  
+  strncpy(products[2].name, "Rinse Water", 31);
+  products[2].ppl = 500.0f;
+  products[2].ppg = 132.1f;
+  products[2].closeTime = 0.20f;
+  
+  strncpy(products[3].name, "Additive", 31);
+  products[3].ppl = 1000.0f;
+  products[3].ppg = 264.2f;
+  products[3].closeTime = 0.15f;
+  
+  productCount = 4;
+  Serial.println("[DB] Initialized 4 default products");
   
   for (int i = 0; i < 10; i++) { loadStations[i].prodIdx = -1; loadStations[i].amount = 0; loadStations[i].seqOrder = 0; }
   for (int i = 0; i < 10; i++) { stState[i] = {false, false, 0, 0, 0}; }
@@ -487,6 +593,8 @@ void setup() {
   server.on("/dashboard.js",        HTTP_GET,  handleStaticFile);
   server.on("/api/products",        HTTP_GET,  handleGetProducts);
   server.on("/api/products",        HTTP_POST, handleAddProduct);
+  server.on("/api/boards/status",   HTTP_GET,  handleBoardsStatus);
+  server.on("/api/boards/rename",   HTTP_POST, handleRenameStation);  // ⚠️  SAFETY: Rename station (address stays FIXED!)
   server.on("/api/load",            HTTP_GET,  handleGetLoad);
   server.on("/api/load",            HTTP_POST, handleSaveLoad);
   server.on("/api/run/sequence",    HTTP_POST, handleSaveSequence);
@@ -510,10 +618,14 @@ void setup() {
   server.begin();
   Serial.println("[Master] Ready!");
   Serial.println("[Master] Starting RS-485 polling...");
+  
+  // Set LED to solid blue (master mode)
+  statusLED.setColor(NeoPixelLED::COLOR_MASTER);
 }
 
 void loop() {
   server.handleClient();
+  statusLED.update();  // Update LED blinking if active
   updateRun();
   
   // Poll slaves periodically

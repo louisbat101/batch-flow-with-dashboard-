@@ -1,0 +1,64 @@
+#include <Arduino.h>
+#include "slave_config.h"
+
+// ═══════════════════════════════════════════════════════════════════════
+// Simple RS-485 RX Test - Prints ANY bytes received on Serial1
+// This will help diagnose if the RS-485 transceiver is working at all
+// ═══════════════════════════════════════════════════════════════════════
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println("\n\n========================================");
+  Serial.println("  RS-485 RX TEST - ESP32-C3 Slave");
+  Serial.println("========================================\n");
+  
+  // Initialize Serial1 for RS-485 at 9600 baud
+  Serial1.begin(RS485_BAUD, SERIAL_8N1, RS485_RXD_PIN, RS485_TXD_PIN);
+  
+  // Setup RS-485 direction control pin (set to receive mode)
+  pinMode(RS485_RD_PIN, OUTPUT);
+  digitalWrite(RS485_RD_PIN, LOW);  // LOW = Receive mode
+  
+  Serial.printf("RS-485 Configuration:\n");
+  Serial.printf("  RX Pin: GPIO%d\n", RS485_RXD_PIN);
+  Serial.printf("  TX Pin: GPIO%d\n", RS485_TXD_PIN);
+  Serial.printf("  RD Pin: GPIO%d (set to LOW for RX mode)\n", RS485_RD_PIN);
+  Serial.printf("  Baud:   %d\n\n", RS485_BAUD);
+  
+  Serial.println("✓ Listening for ANY data on RS-485...");
+  Serial.println("  (If master is transmitting, you should see bytes here)\n");
+}
+
+unsigned long lastByteTime = 0;
+int bytesReceived = 0;
+
+void loop() {
+  // Check if any bytes available on Serial1 (RS-485)
+  if (Serial1.available()) {
+    uint8_t byte = Serial1.read();
+    bytesReceived++;
+    
+    // Print the byte in hex format
+    Serial.printf("[RX] Byte #%d: 0x%02X (%3d) '%c'\n", 
+                  bytesReceived, byte, byte, 
+                  (byte >= 32 && byte < 127) ? byte : '.');
+    
+    lastByteTime = millis();
+  }
+  
+  // Print periodic status every 5 seconds
+  static unsigned long lastStatus = 0;
+  if (millis() - lastStatus > 5000) {
+    lastStatus = millis();
+    
+    if (bytesReceived == 0) {
+      Serial.println("[Status] ⏳ No bytes received yet. Waiting for RS-485 data...");
+    } else {
+      Serial.printf("[Status] ✓ Received %d bytes total (last byte %lu ms ago)\n", 
+                    bytesReceived, millis() - lastByteTime);
+    }
+  }
+  
+  delay(1);  // Small delay to not overwhelm the serial output
+}

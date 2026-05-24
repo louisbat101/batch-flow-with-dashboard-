@@ -1,6 +1,22 @@
 # ESP32 Batch Flow Controller
 
-What I created:
+## 🚨 IMPORTANT: RS-485 Setup Documentation 🚨
+
+**⚠️ CRITICAL:** ESC3E05 PCB documentation is **WRONG** - GPIO20 is RX (not GPIO9)!
+
+### 📚 Complete RS-485 Documentation:
+- **START HERE:** [RS485_DOCUMENTATION_INDEX.md](./RS485_DOCUMENTATION_INDEX.md) - Complete documentation index
+- **QUICK START:** [RS485_QUICK_START.md](./RS485_QUICK_START.md) - Step-by-step checklist
+- **FULL GUIDE:** [RS485_SETUP_GUIDE.md](./RS485_SETUP_GUIDE.md) - Comprehensive technical guide
+- **PIN FIX:** [ESC3E05_PIN_CORRECTION.md](./ESC3E05_PIN_CORRECTION.md) - Critical pin corrections
+- **WIRING:** [RS485_WIRING_DIAGRAM.md](./RS485_WIRING_DIAGRAM.md) - Visual diagrams
+- **STATUS:** [RS485_SUCCESS_SUMMARY.md](./RS485_SUCCESS_SUMMARY.md) - Working configuration
+
+**Status:** ✅ RS-485 Modbus RTU fully working as of May 23, 2026
+
+---
+
+## What I created:
 
 - PlatformIO project for ESP32 firmware (web UI served from SPIFFS)
 - Flowmeter pulse counting with calibration and litres calculation
