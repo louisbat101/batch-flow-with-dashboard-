@@ -281,20 +281,6 @@ body {
   padding: 8px 0;
 }
 
-.no-boards-msg, .error-msg {
-  text-align: center;
-  color: var(--muted);
-  padding: 40px 20px;
-  font-size: 14px;
-  background: var(--card);
-  border-radius: var(--radius);
-  margin: 20px;
-}
-
-.error-msg {
-  color: var(--danger);
-}
-
 .btn-remove {
   background: none;
   border: 1px solid #2a2e3a;
@@ -1134,3 +1120,28 @@ body {
     height: 30px;
   }
 }
+
+/* ════════════════════════════════════════════════════════
+   RUN PAGE - DISPENSING DISPLAY
+   ════════════════════════════════════════════════════════ */
+
+.red-dispensed {
+  color: #ff5c5c !important;
+  font-weight: bold;
+  animation: pulse-red 1s infinite;
+}
+
+@keyframes pulse-red {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.btn-info {
+  background: #4f8cff;
+  color: white;
+}
+
+.btn-info:hover {
+  background: #357acc;
+}
+

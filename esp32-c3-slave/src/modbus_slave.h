@@ -38,11 +38,18 @@ public:
       enabled(false) {}
 
   void begin() {
+    // Set RX pin (GPIO 1) to INPUT mode
+    pinMode(RS485_RXD_PIN, INPUT);
+    
+    // Initialize UART1
     Serial1.begin(RS485_BAUD, SERIAL_8N1, RS485_RXD_PIN, RS485_TXD_PIN);
+    
+    // Set RD pin (direction control)
     pinMode(RS485_RD_PIN, OUTPUT);
-    digitalWrite(RS485_RD_PIN, LOW);  // Try LOW = enable both RX and TX
+    digitalWrite(RS485_RD_PIN, LOW);  // LOW = RX mode
+    
     enabled = true;
-    Serial.printf("[MB] Modbus slave %u on RS485 (GPIO%u RX, GPIO%u TX, GPIO%u RD=LOW)\n",
+    Serial.printf("[MB] Modbus slave %u initialized (GPIO%u RX, GPIO%u TX, GPIO%u RD)\n",
                   slaveAddress, RS485_RXD_PIN, RS485_TXD_PIN, RS485_RD_PIN);
   }
 
@@ -73,27 +80,30 @@ public:
   void update() {
     if (!enabled) return;
     
+    static unsigned long lastDebugMs = 0;
+    
+    if (millis() - lastDebugMs >= 2000) {
+      Serial.printf("[MB] update() called (Serial1.available=%d)\n", Serial1.available());
+      lastDebugMs = millis();
+    }
+    
     if (!Serial1.available()) return;
 
     // Wait a bit for the full frame to arrive (Modbus RTU inter-frame gap)
     delay(5);  // Wait 5ms for complete frame at 9600 baud
     
-    // DEBUG: Show we got something
-    int avail = Serial1.available();
-    Serial.printf("[MB] RX: %d bytes available\n", avail);
-
-    // Read incoming frame
+    // Collect frame bytes into buffer
     uint8_t frame[256];
     int frameLen = 0;
-    unsigned long timeout = millis() + 50;  // 50ms timeout to read all bytes
-
-    while (Serial1.available() && millis() < timeout && frameLen < 256) {
-      frame[frameLen++] = Serial1.read();
-      // No delay between bytes - read as fast as possible
+    uint8_t rxByte;
+    
+    while (Serial1.available() && frameLen < 256) {
+      rxByte = Serial1.read();
+      frame[frameLen++] = rxByte;
     }
-
-    Serial.printf("[MB] RX frame: %d bytes - ", frameLen);
-    for (int i = 0; i < frameLen && i < 16; i++) {
+    
+    Serial.printf("[MB] RX: %d bytes - ", frameLen);
+    for (int i = 0; i < frameLen; i++) {
       Serial.printf("%02X ", frame[i]);
     }
     Serial.println();
@@ -303,17 +313,17 @@ private:
     }
     Serial.println();
 
-    // Set RD pin HIGH for transmit mode
-    digitalWrite(RS485_RD_PIN, HIGH);
-    delayMicroseconds(100);  // Small delay before TX
+    // Single-wire A-only mode: RD stays LOW (RX mode) always
+    // digitalWrite(RS485_RD_PIN, HIGH);  // TX mode - DISABLED for single-wire test
+    // delayMicroseconds(500);  // Increased delay before TX for stability
 
     Serial1.write(frame, len);
     Serial1.flush();
 
-    delayMicroseconds(100);  // Small delay after TX
+    // delayMicroseconds(500);  // Increased delay after TX for stability
     
-    // Set RD pin back LOW for receive mode
-    digitalWrite(RS485_RD_PIN, LOW);
+    // Set RD pin back LOW for receive mode - DISABLED for single-wire test
+    // digitalWrite(RS485_RD_PIN, LOW);
 
     Serial.printf("[MB] TX complete\n");
   }

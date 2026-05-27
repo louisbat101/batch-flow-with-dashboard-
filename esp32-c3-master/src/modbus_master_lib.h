@@ -36,9 +36,13 @@ public:
     node.preTransmission(preTransmission);
     node.postTransmission(postTransmission);
     
+    // NOTE: ModbusMaster library hardcodes timeout to 2000ms (const static)
+    // We can't change it, but we added yield() calls to help WiFi stack
+    
     Serial.println("[Modbus] Library-based master initialized");
     Serial.printf("[Modbus] RS-485: RX=GPIO%d TX=GPIO%d RD=GPIO%d Baud=%d\n", 
                   RS485_RXD_PIN, RS485_TXD_PIN, RS485_RD_PIN, RS485_BAUD);
+    Serial.println("[Modbus] WARNING: Library timeout is 2000ms - RS-485 failures will block!");
   }
   
   // Read 4 holding registers from slave (status, pulses_high, pulses_low, valve)

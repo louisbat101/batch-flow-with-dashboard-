@@ -24,10 +24,17 @@ private:
 
 public:
   static void begin() {
+    // Set RX pin (GPIO 1) to INPUT mode
+    pinMode(RS485_RXD_PIN, INPUT);
+    
+    // Initialize UART1
     Serial1.begin(RS485_BAUD, SERIAL_8N1, RS485_RXD_PIN, RS485_TXD_PIN);
+    
+    // Set RD pin (direction control)
     pinMode(RS485_RD_PIN, OUTPUT);
-    digitalWrite(RS485_RD_PIN, LOW);  // RX mode
-    Serial.println("[Modbus] Master initialized on Serial1");
+    digitalWrite(RS485_RD_PIN, LOW);  // LOW = RX mode
+    
+    Serial.println("[Modbus] Master initialized (GPIO0=TX, GPIO1=RX, GPIO9=RD)");
   }
 
   // Write single coil (0x05) - for valve control
@@ -98,13 +105,14 @@ public:
     request[6] = crc & 0xFF;
     request[7] = (crc >> 8) & 0xFF;
 
-    digitalWrite(RS485_RD_PIN, HIGH);  // TX mode
-    delayMicroseconds(500);  // Wait for transceiver to switch to TX
+    // Single-wire A-only mode: keep RD low (RX mode) always
+    // digitalWrite(RS485_RD_PIN, HIGH);  // TX mode - DISABLED for single-wire test
+    // delay(2);  // Wait 2ms for transceiver to fully switch to TX
     Serial1.write(request, 8);
     Serial1.flush();
-    delayMicroseconds(500);  // Wait for all bytes to transmit
-    digitalWrite(RS485_RD_PIN, LOW);   // RX mode
-    delayMicroseconds(100);  // Wait for transceiver to switch to RX
+    // delay(1);  // Wait 1ms for all bytes to transmit
+    // digitalWrite(RS485_RD_PIN, LOW);   // RX mode - DISABLED for single-wire test
+    delayMicroseconds(100);  // Quick return to RX
 
     Serial.printf("[Modbus] TX: Addr=%u Fn=0x03 Reg=%u Count=%u\n", slaveAddr, startReg, count);
 
@@ -122,7 +130,14 @@ public:
     }
 
     if (idx < 5) {
-      Serial.printf("[Modbus] RX timeout (got %u bytes)\n", idx);
+      Serial.printf("[Modbus] RX timeout (got %u bytes)", idx);
+      if (idx > 0) {
+        Serial.printf(" - bytes: ");
+        for (size_t i = 0; i < idx; i++) {
+          Serial.printf("%02X ", response[i]);
+        }
+      }
+      Serial.println();
       return false;
     }
 

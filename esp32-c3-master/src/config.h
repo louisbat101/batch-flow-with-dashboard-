@@ -14,11 +14,14 @@
 #define WIFI_AP_PASS     "batchflow123"
 #define WIFI_AP_PORT     80
 
-// ── RS-485 Pins (ESP32-C3 Super Mini - MASTER CUSTOM BUILD) ──────
-// Master uses YOUR wiring: GPIO9=RX, GPIO20=RD, GPIO21=TX
-#define RS485_RXD_PIN     9       // RXD from MAX485 (custom wiring)
-#define RS485_TXD_PIN     21      // TXD to MAX485
-#define RS485_RD_PIN      20      // RD/RO direction control (custom wiring)
+// ── RS-485 Pins (ESC3E05 Expansion Board with built-in RS-485) ──────
+// GPIO 2 = TX (transmits RS-485 data)
+// GPIO 3 = RX (receives RS-485 data)
+// GPIO 9 = RD (DE/RE direction control)
+// NOTE: GPIO 0 is bootstrap pin, CANNOT use for UART!
+#define RS485_RXD_PIN     3       // GPIO 3 (RX)
+#define RS485_TXD_PIN     2       // GPIO 2 (TX)
+#define RS485_RD_PIN      9       // Direction control (DE/RE)
 #define RS485_BAUD        9600    // Modbus RTU standard
 
 // ── WS2811/NeoPixel Status LED ──────────────────────────
@@ -27,8 +30,8 @@
 
 // ── Slave Configuration ──────────────────────────────────
 #define MIN_SLAVE_ADDR    1       // Slave 1
-#define MAX_SLAVE_ADDR    10      // Up to 10 slaves
-#define SLAVE_TIMEOUT_MS  1000    // Timeout waiting for slave response
+#define MAX_SLAVE_ADDR    1       // Currently only 1 slave connected (was 10 - caused ghost slaves!)
+#define SLAVE_TIMEOUT_MS  100     // Modbus timeout (was 1000ms - blocked WiFi/WebServer!)
 
 // ── Storage (LittleFS) ───────────────────────────────────
 // (File paths defined in database.h)
