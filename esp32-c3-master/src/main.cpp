@@ -4,6 +4,18 @@
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <FS.h>
+#include <HardwareSerial.h>
+
+// ═══════════════════════════════════════════════════════
+// RS-485 CONFIGURATION - CORRECT PINS FOR ESP32-C3
+// ═══════════════════════════════════════════════════════
+#define RS485_RXD_PIN     20      // GPIO 20 (RXD) - CORRECT PIN
+#define RS485_TXD_PIN     21      // GPIO 21 (TXD) - CORRECT PIN
+#define RS485_RD_PIN      9       // GPIO 9 (RD/DE Direction Control) - REQUIRED!
+#define RS485_BAUD        9600    // Modbus RTU baud rate
+#define MODBUS_ADDRESS    1       // Master address
+
+HardwareSerial rs485(1);
 
 WebServer server(80);
 
@@ -27,6 +39,7 @@ struct Board {
   float dispensedAmount;
   float targetAmount;
   int pulseCount;
+  unsigned long lastPollTime;  // Track last successful poll
 };
 
 Product products[10];
@@ -36,8 +49,104 @@ Board boards[4];
 int boardCount = 4;
 
 // ═══════════════════════════════════════════════════════
-// API HANDLERS
+// RS-485 MODBUS FUNCTIONS
 // ═══════════════════════════════════════════════════════
+
+uint16_t crc16(uint8_t* data, int len) {
+  uint16_t crc = 0xFFFF;
+  for (int i = 0; i < len; i++) {
+    crc ^= data[i];
+    for (int j = 0; j < 8; j++) {
+      if (crc & 1) crc = (crc >> 1) ^ 0xA001;
+      else crc = crc >> 1;
+    }
+  }
+  return crc;
+}
+
+bool queryBoardStatus(int slaveAddr) {
+  // Modbus RTU Read Input Registers (FC 04)
+  // Query: [SlaveAddr] [FC] [RegAddrHi] [RegAddrLo] [CountHi] [CountLo] [CRCHI] [CRCLO]
+  
+  uint8_t request[8];
+  request[0] = slaveAddr;
+  request[1] = 0x04;        // Function Code 04 (Read Input Registers)
+  request[2] = 0x00;        // Register address high
+  request[3] = 0x00;        // Register address low (start at 0)
+  request[4] = 0x00;        // Count high
+  request[5] = 0x04;        // Count low (read 4 registers)
+  
+  uint16_t crc = crc16(request, 6);
+  request[6] = crc & 0xFF;
+  request[7] = (crc >> 8) & 0xFF;
+  
+  // Send request
+  digitalWrite(RS485_RD_PIN, HIGH);  // TX mode
+  delay(50);
+  
+  rs485.write(request, 8);
+  rs485.flush();
+  
+  delay(100);
+  digitalWrite(RS485_RD_PIN, LOW);   // RX mode
+  
+  // Read response
+  uint8_t response[32];
+  int bytesRead = 0;
+  unsigned long startTime = millis();
+  
+  while (millis() - startTime < 1000 && bytesRead < 32) {
+    if (rs485.available()) {
+      response[bytesRead] = rs485.read();
+      bytesRead++;
+    }
+  }
+  
+  // Validate response
+  if (bytesRead < 9) {
+    Serial.printf("[RS485] No response from board %d\n", slaveAddr);
+    return false;
+  }
+  
+  if (response[0] != slaveAddr || response[1] != 0x04) {
+    Serial.printf("[RS485] Invalid response from board %d\n", slaveAddr);
+    return false;
+  }
+  
+  uint16_t respCrc = crc16(response, bytesRead - 2);
+  uint16_t recvCrc = (response[bytesRead-1] << 8) | response[bytesRead-2];
+  
+  if (respCrc != recvCrc) {
+    Serial.printf("[RS485] CRC error from board %d\n", slaveAddr);
+    return false;
+  }
+  
+  Serial.printf("[RS485] ✅ Board %d responded\n", slaveAddr);
+  return true;
+}
+
+void pollAllBoards() {
+  Serial.println("[RS485] ═══ Starting board poll cycle ═══");
+  for (int i = 0; i < boardCount; i++) {
+    int slaveAddr = boards[i].address;
+    bool wasOnline = boards[i].online;
+    
+    Serial.printf("[RS485] Querying board %d (address %d)...\n", i+1, slaveAddr);
+    boards[i].online = queryBoardStatus(slaveAddr);
+    
+    if (boards[i].online != wasOnline) {
+      Serial.printf("[STATUS] Board %d changed to %s\n", slaveAddr, 
+                    boards[i].online ? "ONLINE" : "OFFLINE");
+    }
+    
+    if (boards[i].online) {
+      boards[i].lastPollTime = millis();
+    }
+    
+    delay(200);  // Small delay between queries
+  }
+  Serial.println("[RS485] ═══ Poll cycle complete ═══\n");
+}
 
 void handleRoot() {
   if (LittleFS.exists("/index.html")) {
@@ -85,8 +194,11 @@ void handleStaticFile() {
   server.send(404, "text/plain", "Not Found");
 }
 
-// GET /api/boards/status - Get all boards and their status
+// GET /api/boards/status - Get all boards and their ACTUAL status from RS-485
 void handleBoardsStatus() {
+  // Poll all boards first to get current status
+  pollAllBoards();
+  
   StaticJsonDocument<2048> doc;
   JsonArray boardsArray = doc.createNestedArray();
   
@@ -95,7 +207,7 @@ void handleBoardsStatus() {
     b["address"] = boards[i].address;
     b["name"] = boards[i].name;
     b["product"] = boards[i].product;
-    b["online"] = boards[i].online;
+    b["online"] = boards[i].online;  // Real status from RS-485 poll
     b["dispensing"] = boards[i].dispensing;
     b["dispensedAmount"] = boards[i].dispensedAmount;
     b["targetAmount"] = boards[i].targetAmount;
@@ -298,11 +410,11 @@ void handleStatus() {
 // ═══════════════════════════════════════════════════════
 
 void initializeBoards() {
-  // Initialize 4 stations with simulated online/offline status
-  boards[0] = {1, "Station 1 - Acid", "Acid", true, false, 0, 10.0, 0};
-  boards[1] = {2, "Station 2 - Caustic", "Caustic", true, false, 0, 15.0, 0};
-  boards[2] = {3, "Station 3 - Rinse Water", "Rinse Water", false, false, 0, 20.0, 0};
-  boards[3] = {4, "Station 4 - Additive", "Additive", true, false, 0, 5.0, 0};
+  // Initialize 4 stations - online status will be determined by RS-485 polling
+  boards[0] = {1, "Station 1 - Acid", "Acid", false, false, 0, 10.0, 0, 0};
+  boards[1] = {2, "Station 2 - Caustic", "Caustic", false, false, 0, 15.0, 0, 0};
+  boards[2] = {3, "Station 3 - Rinse Water", "Rinse Water", false, false, 0, 20.0, 0, 0};
+  boards[3] = {4, "Station 4 - Additive", "Additive", false, false, 0, 5.0, 0, 0};
 }
 
 void initializeProducts() {
@@ -311,6 +423,22 @@ void initializeProducts() {
   products[2] = {3, "Rinse Water", 500.0, 0.200};
   products[3] = {4, "Additive", 1000.0, 0.150};
   productCount = 4;
+}
+
+void initializeRS485() {
+  Serial.println("[*] Initializing RS-485 communication...");
+  
+  pinMode(RS485_RD_PIN, OUTPUT);
+  digitalWrite(RS485_RD_PIN, LOW);  // Start in RX mode
+  
+  rs485.begin(RS485_BAUD, SERIAL_8N1, RS485_RXD_PIN, RS485_TXD_PIN);
+  delay(100);
+  
+  Serial.printf("      RXD Pin: GPIO %d\n", RS485_RXD_PIN);
+  Serial.printf("      TXD Pin: GPIO %d\n", RS485_TXD_PIN);
+  Serial.printf("      RD Pin:  GPIO %d\n", RS485_RD_PIN);
+  Serial.printf("      Baud:    %d\n", RS485_BAUD);
+  Serial.println("      ✅ RS-485 ready\n");
 }
 
 void setup() {
@@ -324,6 +452,9 @@ void setup() {
   // Initialize data
   initializeBoards();
   initializeProducts();
+  
+  // Initialize RS-485
+  initializeRS485();
   
   // Initialize LittleFS
   Serial.println("[1/6] Initializing LittleFS...");
@@ -425,49 +556,16 @@ void setup() {
 void loop() {
   server.handleClient();
   
-  // Simulate random online/offline changes occasionally
-  static unsigned long lastToggle = 0;
-  if (millis() - lastToggle > 30000) {  // Every 30 seconds
-    lastToggle = millis();
-    // Randomly update board 3 status
-    if (random(2) == 0) {
-      boards[2].online = !boards[2].online;
-      Serial.printf("[STATUS] Board 3 is now %s\n", boards[2].online ? "ONLINE" : "OFFLINE");
-    }
-  }
-  
-  // Simulate dispensing progress for running boards
-  static unsigned long lastDispense = 0;
-  if (millis() - lastDispense > 1000) {
-    lastDispense = millis();
-    
-    for (int i = 0; i < boardCount; i++) {
-      if (boards[i].dispensing && boards[i].online) {
-        // Simulate pulse counting (e.g., 450 pulses per liter)
-        boards[i].pulseCount += random(10, 50);  // Simulate flowmeter pulses
-        boards[i].dispensedAmount = boards[i].pulseCount / 450.0;  // Convert to liters
-        
-        // Auto-stop when target reached
-        if (boards[i].dispensedAmount >= boards[i].targetAmount) {
-          boards[i].dispensing = false;
-          boards[i].dispensedAmount = boards[i].targetAmount;
-          Serial.printf("[COMPLETE] Board %d finished: %.2f L\n", boards[i].address, boards[i].targetAmount);
-        }
-      }
-    }
-  }
-  
   // Print status periodically
   static unsigned long lastPrint = 0;
-  if (millis() - lastPrint > 10000) {
+  if (millis() - lastPrint > 15000) {
     lastPrint = millis();
     int connectedClients = WiFi.softAPgetStationNum();
     Serial.printf("\n[%lu] Connected: %d client(s)\n", millis()/1000, connectedClients);
     for (int i = 0; i < boardCount; i++) {
-      if (boards[i].online) {
-        Serial.printf("  Board %d: %s - %s\n", boards[i].address, boards[i].name.c_str(), 
-                      boards[i].dispensing ? "DISPENSING" : "IDLE");
-      }
+      Serial.printf("  Board %d (%s): %s - %s\n", boards[i].address, boards[i].name.c_str(),
+                    boards[i].online ? "ONLINE" : "OFFLINE",
+                    boards[i].dispensing ? "DISPENSING" : "IDLE");
     }
     Serial.println();
   }
