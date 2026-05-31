@@ -452,62 +452,87 @@ function renderRunPage() {
   var container = document.getElementById('run-stations-container');
   if (!container) return;
   
-  var html = '';
-  runStations.forEach(function(station) {
-    html += '<div class="run-station-card">';
-    html += '  <div class="run-station-number">' + station.id + '</div>';
-    html += '  <div class="run-station-info">';
-    html += '    <div class="run-station-header">';
-    html += '      <div class="run-station-name">' + station.name + '</div>';
-    html += '    </div>';
-    html += '    <div class="run-station-product">Product: ' + station.product + '</div>';
-    html += '    <div class="run-station-amounts">';
-    html += '      <div class="run-amount-item">';
-    html += '        <span class="run-amount-label">Target</span>';
-    html += '        <span class="run-amount-value">' + station.target.toFixed(2) + ' L</span>';
-    html += '      </div>';
-    html += '      <div class="run-amount-item">';
-    var dispensedClass = station.running ? 'run-amount-value red-dispensed' : 'run-amount-value';
-    html += '        <span class="run-amount-label">Dispensed</span>';
-    html += '        <span class="' + dispensedClass + '">' + station.dispensed.toFixed(2) + ' L</span>';
-    html += '      </div>';
-    html += '      <div class="run-amount-item">';
-    html += '        <span class="run-amount-label">Time to Done</span>';
-    html += '        <span class="run-amount-value">' + station.timeToDone + '</span>';
-    html += '      </div>';
-    html += '    </div>';
-    html += '    <div class="run-progress-bar">';
-    var fillClass = station.done ? 'run-progress-fill complete' : 'run-progress-fill';
-    html += '      <div class="' + fillClass + '" style="width: ' + station.progress + '%">';
-    html += station.progress + '%';
-    html += '      </div>';
-    html += '    </div>';
-    html += '    <div class="run-station-time">' + (station.done ? 'Done' : (station.running ? 'Running...' : 'Ready')) + '</div>';
-    html += '  </div>';
-    html += '  <div class="run-station-actions">';
-    if (station.done) {
-      html += '    <span class="run-station-done">✓</span>';
-      html += '    <button class="btn btn-info btn-sm" onclick="fieldCalibrate(' + station.id + ')">CAL</button>';
-    } else {
-      var btnClass = station.running ? 'btn btn-secondary' : 'btn btn-success';
-      var btnText = station.running ? 'Pause' : 'RUN';
-      html += '    <button class="' + btnClass + '" onclick="toggleStation(' + station.id + ')">' + btnText + '</button>';
+  // Fetch real boards from API
+  var xhr = new XMLHttpRequest();
+  xhr.open('GET', API + '/api/boards/status', true);
+  xhr.onload = function() {
+    if (xhr.status === 200) {
+      try {
+        var response = JSON.parse(xhr.responseText);
+        var stations = response.boards || response;  // Handle {"boards": [...]} format
+        
+        // Only show ONLINE stations that have loads configured
+        var onlineStations = stations.filter(function(s) { return s.online; });
+        
+        if (onlineStations.length === 0) {
+          container.innerHTML = '<div class="no-boards-msg">No boards detected. Please check connections.</div>';
+          return;
+        }
+        
+        // Match with loadData to get configured loads
+        var html = '';
+        onlineStations.forEach(function(station) {
+          // Find matching load data
+          var load = loadData.find(function(l) { return l.address === station.address; });
+          
+          // Skip if no load configured or no product selected
+          if (!load || !load.productId || load.amount <= 0) {
+            return;
+          }
+          
+          html += '<div class="run-station-card">';
+          html += '  <div class="run-station-number">' + station.address + '</div>';
+          html += '  <div class="run-station-info">';
+          html += '    <div class="run-station-header">';
+          html += '      <div class="run-station-name">' + (station.name || 'Station ' + station.address) + '</div>';
+          html += '    </div>';
+          html += '    <div class="run-station-product">Product: ' + (load.product || 'Not Selected') + '</div>';
+          html += '    <div class="run-station-amounts">';
+          html += '      <div class="run-amount-item">';
+          html += '        <span class="run-amount-label">Target</span>';
+          html += '        <span class="run-amount-value">' + load.amount.toFixed(2) + ' L</span>';
+          html += '      </div>';
+          html += '      <div class="run-amount-item">';
+          html += '        <span class="run-amount-label">Dispensed</span>';
+          html += '        <span class="run-amount-value">0.00 L</span>';
+          html += '      </div>';
+          html += '      <div class="run-amount-item">';
+          html += '        <span class="run-amount-label">Time to Done</span>';
+          html += '        <span class="run-amount-value">--:--</span>';
+          html += '      </div>';
+          html += '    </div>';
+          html += '    <div class="run-progress-bar">';
+          html += '      <div class="run-progress-fill" style="width: 0%">0%</div>';
+          html += '    </div>';
+          html += '    <div class="run-station-time">Ready</div>';
+          html += '  </div>';
+          html += '  <div class="run-station-actions">';
+          html += '    <button class="btn btn-success" onclick="startStation(' + station.address + ')">RUN</button>';
+          html += '  </div>';
+          html += '</div>';
+        });
+        
+        if (html === '') {
+          container.innerHTML = '<div class="no-boards-msg">No loads configured. Please go to Load page to set up dispensing.</div>';
+        } else {
+          container.innerHTML = html;
+        }
+        
+      } catch(e) {
+        console.error('Failed to parse boards:', e);
+        container.innerHTML = '<div class="error-msg">Error loading boards</div>';
+      }
     }
-    html += '  </div>';
-    html += '</div>';
-  });
-  
-  container.innerHTML = html;
+  };
+  xhr.onerror = function() {
+    container.innerHTML = '<div class="error-msg">Connection error</div>';
+  };
+  xhr.send();
 }
 
-function toggleStation(stationId) {
-  var station = runStations.find(function(s) { return s.id === stationId; });
-  if (station) {
-    station.running = !station.running;
-    renderRunPage();
-    
-    // In real system: POST /api/run/start_station or /api/run/stop_station
-  }
+function startStation(address) {
+  alert('Starting station ' + address + ' - API integration pending');
+  // In real system: POST /api/run/start with {address: address}
 }
 
 function fieldCalibrate(stationId) {

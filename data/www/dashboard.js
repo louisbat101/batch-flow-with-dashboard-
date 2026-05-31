@@ -450,50 +450,73 @@ function renderRunPage() {
   var container = document.getElementById('run-stations-container');
   if (!container) return;
   
+  // Display only loads that have been configured with a product and amount
   var html = '';
-  runStations.forEach(function(station) {
+  
+  if (loadData.length === 0) {
+    container.innerHTML = '<div class="no-boards-msg">No loads configured. Please go to Load page to set up dispensing.</div>';
+    return;
+  }
+  
+  loadData.forEach(function(load, index) {
+    // Skip if no product selected or amount is zero
+    if (!load.productId || load.amount <= 0) {
+      return;
+    }
+    
+    // Find matching runStation or use defaults
+    var station = runStations.find(function(s) { return s.id === (index + 1); });
+    var dispensed = station ? station.dispensed : 0;
+    var progress = station ? station.progress : 0;
+    var running = station ? station.running : false;
+    var done = station ? station.done : false;
+    
     html += '<div class="run-station-card">';
-    html += '  <div class="run-station-number">' + station.id + '</div>';
+    html += '  <div class="run-station-number">' + load.address + '</div>';
     html += '  <div class="run-station-info">';
     html += '    <div class="run-station-header">';
-    html += '      <div class="run-station-name">' + station.name + '</div>';
+    html += '      <div class="run-station-name">' + (load.stationName || 'Station ' + load.address) + '</div>';
     html += '    </div>';
-    html += '    <div class="run-station-product">Product: ' + station.product + '</div>';
+    html += '    <div class="run-station-product">Product: ' + (load.product || 'Not Selected') + '</div>';
     html += '    <div class="run-station-amounts">';
     html += '      <div class="run-amount-item">';
     html += '        <span class="run-amount-label">Target</span>';
-    html += '        <span class="run-amount-value">' + station.target.toFixed(2) + ' L</span>';
+    html += '        <span class="run-amount-value">' + load.amount.toFixed(2) + ' L</span>';
     html += '      </div>';
     html += '      <div class="run-amount-item">';
     html += '        <span class="run-amount-label">Dispensed</span>';
-    html += '        <span class="run-amount-value">' + station.dispensed.toFixed(2) + ' L</span>';
+    html += '        <span class="run-amount-value">' + dispensed.toFixed(2) + ' L</span>';
     html += '      </div>';
     html += '      <div class="run-amount-item">';
     html += '        <span class="run-amount-label">Time to Done</span>';
-    html += '        <span class="run-amount-value">' + station.timeToDone + '</span>';
+    html += '        <span class="run-amount-value">--:--</span>';
     html += '      </div>';
     html += '    </div>';
     html += '    <div class="run-progress-bar">';
-    var fillClass = station.done ? 'run-progress-fill complete' : 'run-progress-fill';
-    html += '      <div class="' + fillClass + '" style="width: ' + station.progress + '%">';
-    html += station.progress + '%';
+    var fillClass = done ? 'run-progress-fill complete' : 'run-progress-fill';
+    html += '      <div class="' + fillClass + '" style="width: ' + progress + '%">';
+    html += progress + '%';
     html += '      </div>';
     html += '    </div>';
-    html += '    <div class="run-station-time">' + (station.done ? 'Done' : (station.running ? 'Running...' : 'Ready')) + '</div>';
+    html += '    <div class="run-station-time">' + (done ? 'Done' : (running ? 'Running...' : 'Ready')) + '</div>';
     html += '  </div>';
     html += '  <div class="run-station-actions">';
-    if (station.done) {
+    if (done) {
       html += '    <span class="run-station-done">✓</span>';
     } else {
-      var btnClass = station.running ? 'btn btn-secondary' : 'btn btn-success';
-      var btnText = station.running ? 'Pause' : 'RUN';
-      html += '    <button class="' + btnClass + '" onclick="toggleStation(' + station.id + ')">' + btnText + '</button>';
+      var btnClass = running ? 'btn btn-secondary' : 'btn btn-success';
+      var btnText = running ? 'Pause' : 'RUN';
+      html += '    <button class="' + btnClass + '" onclick="toggleStation(' + (index + 1) + ')">' + btnText + '</button>';
     }
     html += '  </div>';
     html += '</div>';
   });
   
-  container.innerHTML = html;
+  if (html === '') {
+    container.innerHTML = '<div class="no-boards-msg">No loads configured. Please go to Load page to set up dispensing.</div>';
+  } else {
+    container.innerHTML = html;
+  }
 }
 
 function toggleStation(stationId) {
