@@ -88,7 +88,7 @@ void handleStaticFile() {
 // GET /api/boards/status - Get all boards and their status
 void handleBoardsStatus() {
   StaticJsonDocument<2048> doc;
-  JsonArray boardsArray = doc.createNestedArray("boards");
+  JsonArray boardsArray = doc.createNestedArray();
   
   for (int i = 0; i < boardCount; i++) {
     JsonObject b = boardsArray.createNestedObject();

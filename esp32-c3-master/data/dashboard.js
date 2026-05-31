@@ -13,12 +13,7 @@ var boards = [
 ];
 
 // Load data structure
-var loadData = [
-  { address: 1, stationName: 'Station 1', product: 'Acid', amount: 5.00 },
-  { address: 2, stationName: 'Station 2 - Caustic', product: 'Caustic', amount: 15.00 },
-  { address: 3, stationName: 'Station 3 - Rinse Water', product: 'Rinse Water', amount: 25.00 },
-  { address: 4, stationName: 'Station 4 - Additive', product: 'Additive', amount: 5.00 }
-];
+var loadData = [];  // Start empty - user adds loads
 
 var products = [
   { id: 1, name: 'Acid' },
@@ -217,7 +212,8 @@ function fetchBoardsAndRenderLoad() {
         xhr2.onload = function() {
           if (xhr2.status === 200) {
             try {
-              var productsData = JSON.parse(xhr2.responseText);
+              var response = JSON.parse(xhr2.responseText);
+              var productsData = response.products || [];
               renderLoadTableWithData(stations, productsData);
             } catch(e) {
               console.error('Failed to parse products:', e);
@@ -458,25 +454,29 @@ function renderRunPage() {
   xhr.onload = function() {
     if (xhr.status === 200) {
       try {
-        var response = JSON.parse(xhr.responseText);
-        var stations = response.boards || response;  // Handle {"boards": [...]} format
+        var stations = JSON.parse(xhr.responseText);
         
-        // Only show ONLINE stations that have loads configured
+        // Filter to only online stations
         var onlineStations = stations.filter(function(s) { return s.online; });
         
-        if (onlineStations.length === 0) {
-          container.innerHTML = '<div class="no-boards-msg">No boards detected. Please check connections.</div>';
+        if (loadData.length === 0) {
+          container.innerHTML = '<div class="no-boards-msg">No loads configured. Please go to Load page to set up dispensing.</div>';
           return;
         }
         
         // Match with loadData to get configured loads
         var html = '';
-        onlineStations.forEach(function(station) {
-          // Find matching load data
-          var load = loadData.find(function(l) { return l.address === station.address; });
+        loadData.forEach(function(load) {
+          // Find matching station
+          var station = stations.find(function(s) { return s.address === load.address; });
           
-          // Skip if no load configured or no product selected
-          if (!load || !load.productId || load.amount <= 0) {
+          if (!station) {
+            console.warn('Station ' + load.address + ' not found in API response');
+            return;
+          }
+          
+          // Skip if no product selected or amount is zero
+          if (!load.productId || load.amount <= 0) {
             return;
           }
           
@@ -494,7 +494,7 @@ function renderRunPage() {
           html += '      </div>';
           html += '      <div class="run-amount-item">';
           html += '        <span class="run-amount-label">Dispensed</span>';
-          html += '        <span class="run-amount-value">0.00 L</span>';
+          html += '        <span class="run-amount-value">' + (station.dispensedAmount || 0).toFixed(2) + ' L</span>';
           html += '      </div>';
           html += '      <div class="run-amount-item">';
           html += '        <span class="run-amount-label">Time to Done</span>';
@@ -502,37 +502,75 @@ function renderRunPage() {
           html += '      </div>';
           html += '    </div>';
           html += '    <div class="run-progress-bar">';
-          html += '      <div class="run-progress-fill" style="width: 0%">0%</div>';
+          var progress = station.targetAmount > 0 ? (station.dispensedAmount / station.targetAmount * 100) : 0;
+          html += '      <div class="run-progress-fill" style="width: ' + progress + '%">' + Math.round(progress) + '%</div>';
           html += '    </div>';
-          html += '    <div class="run-station-time">Ready</div>';
+          html += '    <div class="run-station-time">' + (station.dispensing ? 'Running...' : 'Ready') + '</div>';
           html += '  </div>';
           html += '  <div class="run-station-actions">';
-          html += '    <button class="btn btn-success" onclick="startStation(' + station.address + ')">RUN</button>';
+          if (station.dispensing) {
+            html += '    <button class="btn btn-secondary" onclick="stopStation(' + station.address + ')">STOP</button>';
+          } else {
+            html += '    <button class="btn btn-success" onclick="startStation(' + station.address + ')">RUN</button>';
+          }
           html += '  </div>';
           html += '</div>';
         });
         
         if (html === '') {
-          container.innerHTML = '<div class="no-boards-msg">No loads configured. Please go to Load page to set up dispensing.</div>';
+          container.innerHTML = '<div class="no-boards-msg">No loads with products configured. Please go to Load page to set up dispensing.</div>';
         } else {
           container.innerHTML = html;
         }
         
       } catch(e) {
         console.error('Failed to parse boards:', e);
-        container.innerHTML = '<div class="error-msg">Error loading boards</div>';
+        container.innerHTML = '<div class="error-msg">Error: ' + e.message + '</div>';
       }
+    } else {
+      container.innerHTML = '<div class="error-msg">API Error: ' + xhr.status + '</div>';
     }
   };
   xhr.onerror = function() {
-    container.innerHTML = '<div class="error-msg">Connection error</div>';
+    container.innerHTML = '<div class="error-msg">Connection error - cannot reach API</div>';
   };
+  xhr.ontimeout = function() {
+    container.innerHTML = '<div class="error-msg">API timeout</div>';
+  };
+  xhr.timeout = 5000;
   xhr.send();
 }
 
 function startStation(address) {
-  alert('Starting station ' + address + ' - API integration pending');
-  // In real system: POST /api/run/start with {address: address}
+  fetch(API + '/api/run/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address: address })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    console.log('Start response:', data);
+    renderRunPage();  // Refresh display
+  })
+  .catch(function(e) {
+    alert('Error starting station: ' + e);
+  });
+}
+
+function stopStation(address) {
+  fetch(API + '/api/run/stop', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address: address })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    console.log('Stop response:', data);
+    renderRunPage();  // Refresh display
+  })
+  .catch(function(e) {
+    alert('Error stopping station: ' + e);
+  });
 }
 
 function fieldCalibrate(stationId) {
@@ -640,8 +678,18 @@ var boardConfigs = [
 var editingProductId = null;
 
 function renderProductsPage() {
-  renderProductsTable();
-  renderBoardConfigs();
+  // Fetch products from API
+  fetch(API + '/api/products')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      products = data.products || [];
+      renderProductsTable();
+      renderBoardConfigs();
+    })
+    .catch(function(e) {
+      console.error('Failed to load products:', e);
+      renderProductsTable();
+    });
 }
 
 function renderProductsTable() {
