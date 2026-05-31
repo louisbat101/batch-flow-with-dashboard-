@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BatchFlow - Intelligent Batching System</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #0a0a0a;
+      color: #e0e0e0;
+      padding: 20px;
+    }
+    
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    
+    header {
+      background: linear-gradient(135deg, #2196F3, #1976D2);
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 30px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    
+    header h1 {
+      font-size: 28px;
+      margin-bottom: 5px;
+    }
+    
+    header p {
+      opacity: 0.9;
+      font-size: 14px;
+    }
+    
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+    
+    .card {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      transition: border-color 0.3s;
+    }
+    
+    .card:hover {
+      border-color: #2196F3;
+    }
+    
+    .card h2 {
+      color: #4CAF50;
+      font-size: 18px;
+      margin-bottom: 15px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .card h3 {
+      color: #2196F3;
+      font-size: 14px;
+      margin: 15px 0 10px 0;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #333;
+    }
+    
+    .batching-section {
+      margin-bottom: 20px;
+      padding: 15px;
+      background: #0d0d0d;
+      border-left: 3px solid #2196F3;
+      border-radius: 4px;
+    }
+    
+    .control-group {
+      margin-bottom: 15px;
+    }
+    
+    .control-group label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: 500;
+      font-size: 13px;
+      color: #b0b0b0;
+    }
+    
+    .control-group input[type="number"],
+    .control-group input[type="range"],
+    .control-group select {
+      width: 100%;
+      padding: 8px;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 4px;
+      color: #e0e0e0;
+      font-size: 13px;
+    }
+    
+    .control-group input[type="range"] {
+      padding: 0;
+    }
+    
+    .control-group input[type="checkbox"] {
+      margin-right: 8px;
+    }
+    
+    .mode-selector {
+      display: flex;
+      gap: 20px;
+      margin-bottom: 10px;
+    }
+    
+    .mode-selector label {
+      display: flex;
+      align-items: center;
+      margin: 0;
+      cursor: pointer;
+      font-weight: normal;
+    }
+    
+    .mode-selector input {
+      margin-right: 5px;
+    }
+    
+    .info-box {
+      background: #1a2a3a;
+      border: 1px solid #2196F3;
+      border-radius: 4px;
+      padding: 10px;
+      font-size: 12px;
+      color: #a0c0ff;
+    }
+    
+    .metric {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid #222;
+      font-size: 13px;
+    }
+    
+    .metric:last-child {
+      border-bottom: none;
+    }
+    
+    .metric .label {
+      color: #999;
+      font-weight: 500;
+    }
+    
+    .metric .value {
+      color: #4CAF50;
+      font-weight: 600;
+      font-family: 'Courier New', monospace;
+    }
+    
+    .metric .value.positive {
+      color: #FF9800;
+    }
+    
+    .metric .value.negative {
+      color: #F44336;
+    }
+    
+    .metric .value.over {
+      color: #FF9800;
+    }
+    
+    .metric .value.under {
+      color: #F44336;
+    }
+    
+    .batch-progress {
+      padding: 15px;
+      background: #0d0d0d;
+      border-left: 3px solid #FF9800;
+      border-radius: 4px;
+    }
+    
+    .progress-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+      font-weight: 600;
+    }
+    
+    .status-badge {
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      background: #333;
+      color: #999;
+    }
+    
+    .status-badge.running {
+      background: #4CAF50;
+      color: #fff;
+    }
+    
+    .status-badge.priming {
+      background: #2196F3;
+      color: #fff;
+    }
+    
+    .status-badge.shutoff {
+      background: #FF9800;
+      color: #fff;
+    }
+    
+    .status-badge.done {
+      background: #4CAF50;
+      color: #fff;
+    }
+    
+    .status-badge.idle {
+      background: #666;
+      color: #fff;
+    }
+    
+    .progress-bar-container {
+      width: 100%;
+      height: 24px;
+      background: #333;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 15px;
+      border: 1px solid #444;
+    }
+    
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #4CAF50, #8BC34A);
+      transition: width 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding-right: 8px;
+      font-weight: 600;
+      font-size: 12px;
+      color: #fff;
+      text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+    }
+    
+    .progress-metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    
+    .btn-primary {
+      width: 100%;
+      padding: 12px;
+      background: linear-gradient(135deg, #4CAF50, #45a049);
+      border: none;
+      border-radius: 4px;
+      color: white;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.3s;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+    }
+    
+    .btn-primary:active {
+      transform: translateY(0);
+    }
+    
+    .history-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin-top: 10px;
+    }
+    
+    .history-table th {
+      background: #0d0d0d;
+      border: 1px solid #333;
+      padding: 8px;
+      text-align: left;
+      color: #2196F3;
+      font-weight: 600;
+    }
+    
+    .history-table td {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      padding: 8px;
+      font-family: 'Courier New', monospace;
+    }
+    
+    .history-table tr:nth-child(even) td {
+      background: #0d0d0d;
+    }
+    
+    .history-table td.over {
+      color: #FF9800;
+    }
+    
+    .history-table td.under {
+      color: #F44336;
+    }
+    
+    #gain-value {
+      display: inline-block;
+      min-width: 30px;
+      background: #0d0d0d;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-weight: 600;
+      font-family: monospace;
+    }
+    
+    @media (max-width: 1024px) {
+      .main-grid {
+        grid-template-columns: 1fr;
+      }
+      
+      .progress-metrics {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🧪 BatchFlow – Intelligent Batching System</h1>
+      <p>Pulse-based batching with adaptive shutoff control</p>
+    </header>
+    
+    <div class="main-grid">
+      <!-- Left Column: Controls -->
+      <div>
+        <div class="card">
+          <h2>⚙️ Batching Configuration</h2>
+          <div id="batching-controls"></div>
+        </div>
+      </div>
+      
+      <!-- Right Column: Progress -->
+      <div>
+        <div class="card">
+          <h2>📊 Current Batch</h2>
+          <div id="batch-progress"></div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- History -->
+    <div class="card">
+      <h2>📈 Batch History</h2>
+      <div id="batch-history"></div>
+    </div>
+  </div>
+  
+  <script src="batching.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      initBatchingUI();
+    });
+  </script>
+</body>
+</html>
