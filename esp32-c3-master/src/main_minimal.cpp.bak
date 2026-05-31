@@ -1,0 +1,23 @@
+#include <Arduino.h>
+#include <WiFi.h>
+
+void setup() {
+  Serial.begin(115200);
+  delay(3000);
+  Serial.println("\n\nMINIMAL TEST\n");
+  
+  Serial.println("Starting WiFi AP...");
+  WiFi.mode(WIFI_AP);
+  delay(1000);
+  
+  bool ok = WiFi.softAP("BatchFlow-Master", "batchflow123");
+  Serial.printf("AP Started: %s\n", ok ? "YES" : "NO");
+  Serial.printf("IP: %s\n", WiFi.softAPIP().toString().c_str());
+  
+  Serial.println("Ready!");
+}
+
+void loop() {
+  delay(5000);
+  Serial.printf("Stations: %d\n", WiFi.softAPgetStationNum());
+}

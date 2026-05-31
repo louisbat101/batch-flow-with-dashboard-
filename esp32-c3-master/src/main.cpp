@@ -253,7 +253,7 @@ void setup() {
   server.on("/style.css", HTTP_GET, handleStaticFile);
   server.on("/api/products", HTTP_GET, handleProductsList);
   server.on("/api/products", HTTP_POST, handleProductAdd);
-  server.on("/api/products", HTTP_DELETE, handleProductDelete);
+  server.onNotFound(handleStaticFile);
   server.on("/api/status", HTTP_GET, handleStatus);
   
   server.begin();
