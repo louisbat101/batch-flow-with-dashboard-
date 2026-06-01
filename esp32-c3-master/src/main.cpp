@@ -80,25 +80,29 @@ bool queryBoardStatus(int slaveAddr) {
   request[6] = crc & 0xFF;
   request[7] = (crc >> 8) & 0xFF;
   
-  // Send request
+  // Send request - NO BLOCKING DELAYS
   digitalWrite(RS485_RD_PIN, HIGH);  // TX mode
-  delay(50);
+  delayMicroseconds(500);  // Brief turnaround time
   
   rs485.write(request, 8);
   rs485.flush();
   
-  delay(100);
+  delayMicroseconds(500);  // Brief turnaround time
   digitalWrite(RS485_RD_PIN, LOW);   // RX mode
   
-  // Read response
+  // Read response with non-blocking pattern
   uint8_t response[32];
   int bytesRead = 0;
   unsigned long startTime = millis();
   
-  while (millis() - startTime < 200 && bytesRead < 32) {  // Reduced from 1000ms to 200ms for faster API response
+  // Wait for response with yield() to let WiFi run
+  while (millis() - startTime < 300) {  // Increased timeout back to 300ms
+    yield();  // CRITICAL: Let ESP32 service WiFi tasks
+    
     if (rs485.available()) {
       response[bytesRead] = rs485.read();
       bytesRead++;
+      if (bytesRead >= 32) break;
     }
   }
   
@@ -125,6 +129,7 @@ bool queryBoardStatus(int slaveAddr) {
   return true;
 }
 
+
 void pollAllBoards() {
   Serial.println("[RS485] ═══ Starting board poll cycle ═══");
   for (int i = 0; i < boardCount; i++) {
@@ -143,7 +148,8 @@ void pollAllBoards() {
       boards[i].lastPollTime = millis();
     }
     
-    delay(20);  // Quick delay between queries
+    yield();  // CRITICAL: Let WiFi run between queries
+    delayMicroseconds(100);  // Minimal inter-board delay
   }
   Serial.println("[RS485] ═══ Poll cycle complete ═══");
 }
@@ -493,6 +499,11 @@ void setup() {
   WiFi.mode(WIFI_AP);
   delay(500);
   
+  // Explicitly configure AP with IP
+  IPAddress apIP(192, 168, 4, 1);
+  IPAddress subnet(255, 255, 255, 0);
+  WiFi.softAPConfig(apIP, apIP, subnet);
+  
   bool apOk = WiFi.softAP("BatchFlow-Master", "batchflow123", 6, false, 4);
   Serial.printf("      AP Start: %s\n", apOk ? "✅ SUCCESS" : "❌ FAILED");
   Serial.printf("      IP Address: %s\n", WiFi.softAPIP().toString().c_str());
@@ -564,13 +575,16 @@ void setup() {
 
 void loop() {
   server.handleClient();
+  yield();  // CRITICAL: Let WiFi run
   
   // Background RS-485 polling - keeps board status fresh without blocking API
   static unsigned long lastPoll = 0;
-  if (millis() - lastPoll > 1000) {  // Poll every 1 second (faster now with 200ms timeout)
+  if (millis() - lastPoll > 1000) {  // Poll every 1 second
     lastPoll = millis();
     pollAllBoards();  // Update all board statuses
   }
+  
+  yield();  // CRITICAL: Let WiFi run again
   
   // Print status periodically
   static unsigned long lastPrint = 0;
@@ -586,5 +600,5 @@ void loop() {
     Serial.println();
   }
   
-  delay(1);
+  delayMicroseconds(100);  // Minimal yield
 }
