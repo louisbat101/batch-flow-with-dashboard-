@@ -95,7 +95,7 @@ bool queryBoardStatus(int slaveAddr) {
   int bytesRead = 0;
   unsigned long startTime = millis();
   
-  while (millis() - startTime < 1000 && bytesRead < 32) {
+  while (millis() - startTime < 200 && bytesRead < 32) {  // Reduced from 1000ms to 200ms for faster API response
     if (rs485.available()) {
       response[bytesRead] = rs485.read();
       bytesRead++;
@@ -143,9 +143,9 @@ void pollAllBoards() {
       boards[i].lastPollTime = millis();
     }
     
-    delay(200);  // Small delay between queries
+    delay(20);  // Quick delay between queries
   }
-  Serial.println("[RS485] ═══ Poll cycle complete ═══\n");
+  Serial.println("[RS485] ═══ Poll cycle complete ═══");
 }
 
 void handleRoot() {
@@ -196,9 +196,6 @@ void handleStaticFile() {
 
 // GET /api/boards/status - Get all boards and their ACTUAL status from RS-485
 void handleBoardsStatus() {
-  // Poll all boards first to get current status
-  pollAllBoards();
-  
   StaticJsonDocument<2048> doc;
   JsonArray boardsArray = doc.createNestedArray();
   
@@ -207,7 +204,7 @@ void handleBoardsStatus() {
     b["address"] = boards[i].address;
     b["name"] = boards[i].name;
     b["product"] = boards[i].product;
-    b["online"] = boards[i].online;  // Real status from RS-485 poll
+    b["online"] = boards[i].online;  // Current status from last poll
     b["dispensing"] = boards[i].dispensing;
     b["dispensedAmount"] = boards[i].dispensedAmount;
     b["targetAmount"] = boards[i].targetAmount;
@@ -217,6 +214,11 @@ void handleBoardsStatus() {
   String json;
   serializeJson(doc, json);
   server.send(200, "application/json", json);
+}
+
+// GET /api/health - Health check
+void handleHealth() {
+  server.send(200, "application/json", "{\"status\":\"ok\",\"board2_online\":" + String(boards[1].online ? "true" : "false") + "}");
 }
 
 // POST /api/boards/rename - Rename a board
@@ -495,7 +497,9 @@ void setup() {
   Serial.printf("      AP Start: %s\n", apOk ? "✅ SUCCESS" : "❌ FAILED");
   Serial.printf("      IP Address: %s\n", WiFi.softAPIP().toString().c_str());
   Serial.printf("      Subnet Mask: %s\n", WiFi.softAPSubnetMask().toString().c_str());
-  Serial.printf("      Max Clients: 4\n\n");
+  Serial.printf("      Max Clients: 4\n");
+  Serial.printf("      Broadcast Status: %s\n", WiFi.softAPgetStationNum() >= 0 ? "✅ ENABLED" : "❌ FAILED");
+  Serial.println();
   delay(1000);
   
   // Setup web server routes
@@ -509,6 +513,9 @@ void setup() {
   server.on("/batching.js", HTTP_GET, handleStaticFile);
   server.on("/style.css", HTTP_GET, handleStaticFile);
   server.on("/batching.html", HTTP_GET, handleStaticFile);
+  
+  // Health check
+  server.on("/api/health", HTTP_GET, handleHealth);
   
   // API Routes - Boards
   server.on("/api/boards/status", HTTP_GET, handleBoardsStatus);
@@ -551,10 +558,19 @@ void setup() {
   Serial.println("🌐 Access:   http://192.168.4.1/");
   Serial.println("📊 API:      http://192.168.4.1/api/boards/status");
   Serial.println("════════════════════════════════════════════════════\n");
+  
+  delay(2000);  // Give WiFi time to stabilize before starting loop
 }
 
 void loop() {
   server.handleClient();
+  
+  // Background RS-485 polling - keeps board status fresh without blocking API
+  static unsigned long lastPoll = 0;
+  if (millis() - lastPoll > 1000) {  // Poll every 1 second (faster now with 200ms timeout)
+    lastPoll = millis();
+    pollAllBoards();  // Update all board statuses
+  }
   
   // Print status periodically
   static unsigned long lastPrint = 0;

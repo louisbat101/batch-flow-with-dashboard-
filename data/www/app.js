@@ -249,6 +249,59 @@ function scanValves() {
 
 loadSettings();
 
+// ──  Load board status into dashboard ──────────────────
+function loadBoardStatus() {
+  try {
+    var r = new XMLHttpRequest();
+    r.open('GET', API + '/api/boards/status', true);
+    r.timeout = 5000;
+    r.onload = function() {
+      try {
+        var boards = JSON.parse(r.responseText);
+        var onlineCount = 0;
+        var dispensingCount = 0;
+        
+        // Count online/dispensing boards
+        for (var i = 0; i < boards.length; i++) {
+          if (boards[i].online) onlineCount++;
+          if (boards[i].dispensing) dispensingCount++;
+        }
+        
+        // Update dashboard stats
+        var elOnline = document.getElementById('stat-online-count');
+        if (elOnline) elOnline.textContent = onlineCount;
+        
+        var elDispensing = document.getElementById('stat-dispensing-count');
+        if (elDispensing) elDispensing.textContent = dispensingCount;
+        
+        // Render boards grid
+        var gridEl = document.getElementById('boards-grid');
+        if (gridEl) {
+          gridEl.innerHTML = '';
+          for (var i = 0; i < boards.length; i++) {
+            var b = boards[i];
+            var boardDiv = document.createElement('div');
+            boardDiv.className = 'board-card ' + (b.online ? 'online' : 'offline');
+            boardDiv.innerHTML = '<div class="board-address">Board ' + b.address + '</div>' +
+                                 '<div class="board-name">' + b.name + '</div>' +
+                                 '<div class="board-status">' + (b.online ? '🟢 ONLINE' : '🔴 OFFLINE') + '</div>';
+            gridEl.appendChild(boardDiv);
+          }
+        }
+      } catch(e) {
+        console.error('Failed to parse board status:', e);
+      }
+    };
+    r.onerror = function() { console.error('Failed to load board status'); };
+    r.send();
+  } catch(e) { console.error('Board status error:', e); }
+}
+
+// Load board status every 5 seconds
+setInterval(loadBoardStatus, 5000);
+loadBoardStatus();  // Initial load
+
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  LINE SELECTOR  (Load page)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
