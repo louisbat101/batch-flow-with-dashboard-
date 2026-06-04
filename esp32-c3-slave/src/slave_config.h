@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 // ESP32-C3 Super Mini + ESC3E05 4-Channel Relay Expansion Board
 // Pinout reference: CH1-CH4(Relay DO) → GPIO 5/6/7/10
-//                   RD/RXD/TXD(RS485) → GPIO 9/20/21
+//                   RD/RXD/TXD(RS485) → GPIO 9/3/2 (Receive Enable, RX, TX)
 // ═══════════════════════════════════════════════════════════════════════
 
 // ── Slave Address ────────────────────────────────────

@@ -1,0 +1,604 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <LittleFS.h>
+#include <ArduinoJson.h>
+#include <FS.h>
+#include <HardwareSerial.h>
+
+// ═══════════════════════════════════════════════════════
+// RS-485 CONFIGURATION - CORRECT PINS FOR ESP32-C3
+// ═══════════════════════════════════════════════════════
+#define RS485_RXD_PIN     20      // GPIO 20 (RXD) - CORRECT PIN
+#define RS485_TXD_PIN     21      // GPIO 21 (TXD) - CORRECT PIN
+#define RS485_RD_PIN      9       // GPIO 9 (RD/DE Direction Control) - REQUIRED!
+#define RS485_BAUD        9600    // Modbus RTU baud rate
+#define MODBUS_ADDRESS    1       // Master address
+
+HardwareSerial rs485(1);
+
+WebServer server(80);
+
+// ═══════════════════════════════════════════════════════
+// BOARD & PRODUCT DATA STRUCTURES
+// ═══════════════════════════════════════════════════════
+
+struct Product {
+  int id;
+  String name;
+  float pulsesPerLiter;
+  float valveTime;  // seconds
+};
+
+struct Board {
+  int address;
+  String name;
+  String product;
+  bool online;
+  bool dispensing;
+  float dispensedAmount;
+  float targetAmount;
+  int pulseCount;
+  unsigned long lastPollTime;  // Track last successful poll
+};
+
+Product products[10];
+int productCount = 0;
+
+Board boards[4];
+int boardCount = 4;
+
+// ═══════════════════════════════════════════════════════
+// RS-485 MODBUS FUNCTIONS
+// ═══════════════════════════════════════════════════════
+
+uint16_t crc16(uint8_t* data, int len) {
+  uint16_t crc = 0xFFFF;
+  for (int i = 0; i < len; i++) {
+    crc ^= data[i];
+    for (int j = 0; j < 8; j++) {
+      if (crc & 1) crc = (crc >> 1) ^ 0xA001;
+      else crc = crc >> 1;
+    }
+  }
+  return crc;
+}
+
+bool queryBoardStatus(int slaveAddr) {
+  // Modbus RTU Read Input Registers (FC 04)
+  // Query: [SlaveAddr] [FC] [RegAddrHi] [RegAddrLo] [CountHi] [CountLo] [CRCHI] [CRCLO]
+  
+  uint8_t request[8];
+  request[0] = slaveAddr;
+  request[1] = 0x04;        // Function Code 04 (Read Input Registers)
+  request[2] = 0x00;        // Register address high
+  request[3] = 0x00;        // Register address low (start at 0)
+  request[4] = 0x00;        // Count high
+  request[5] = 0x04;        // Count low (read 4 registers)
+  
+  uint16_t crc = crc16(request, 6);
+  request[6] = crc & 0xFF;
+  request[7] = (crc >> 8) & 0xFF;
+  
+  // Send request - NO BLOCKING DELAYS
+  digitalWrite(RS485_RD_PIN, HIGH);  // TX mode
+  delayMicroseconds(500);  // Brief turnaround time
+  
+  rs485.write(request, 8);
+  rs485.flush();
+  
+  delayMicroseconds(500);  // Brief turnaround time
+  digitalWrite(RS485_RD_PIN, LOW);   // RX mode
+  
+  // Read response with non-blocking pattern
+  uint8_t response[32];
+  int bytesRead = 0;
+  unsigned long startTime = millis();
+  
+  // Wait for response with yield() to let WiFi run
+  while (millis() - startTime < 50) {  // REDUCED: 50ms timeout (was 300ms) to avoid blocking WiFi
+    yield();  // CRITICAL: Let ESP32 service WiFi tasks
+    
+    if (rs485.available()) {
+      response[bytesRead] = rs485.read();
+      bytesRead++;
+      if (bytesRead >= 32) break;
+    }
+  }
+  
+  // Validate response
+  if (bytesRead < 9) {
+    Serial.printf("[RS485] No response from board %d\n", slaveAddr);
+    return false;
+  }
+  
+  if (response[0] != slaveAddr || response[1] != 0x04) {
+    Serial.printf("[RS485] Invalid response from board %d\n", slaveAddr);
+    return false;
+  }
+  
+  uint16_t respCrc = crc16(response, bytesRead - 2);
+  uint16_t recvCrc = (response[bytesRead-1] << 8) | response[bytesRead-2];
+  
+  if (respCrc != recvCrc) {
+    Serial.printf("[RS485] CRC error from board %d\n", slaveAddr);
+    return false;
+  }
+  
+  Serial.printf("[RS485] ✅ Board %d responded\n", slaveAddr);
+  return true;
+}
+
+
+void pollAllBoards() {
+  Serial.println("[RS485] ═══ Starting board poll cycle ═══");
+  for (int i = 0; i < boardCount; i++) {
+    int slaveAddr = boards[i].address;
+    bool wasOnline = boards[i].online;
+    
+    Serial.printf("[RS485] Querying board %d (address %d)...\n", i+1, slaveAddr);
+    boards[i].online = queryBoardStatus(slaveAddr);
+    
+    if (boards[i].online != wasOnline) {
+      Serial.printf("[STATUS] Board %d changed to %s\n", slaveAddr, 
+                    boards[i].online ? "ONLINE" : "OFFLINE");
+    }
+    
+    if (boards[i].online) {
+      boards[i].lastPollTime = millis();
+    }
+    
+    yield();  // CRITICAL: Let WiFi run between queries
+    delayMicroseconds(100);  // Minimal inter-board delay
+  }
+  Serial.println("[RS485] ═══ Poll cycle complete ═══");
+}
+
+void handleRoot() {
+  if (LittleFS.exists("/index.html")) {
+    File file = LittleFS.open("/index.html", "r");
+    if (file) {
+      server.streamFile(file, "text/html");
+      file.close();
+      return;
+    }
+  }
+  server.send(200, "text/html", "<h1>BatchFlow Master</h1><p>LittleFS files not found. Uploading...</p>");
+}
+
+void handleStaticFile() {
+  String path = server.uri();
+  String contentType = "application/octet-stream";
+  
+  if (path.endsWith(".js")) {
+    contentType = "application/javascript";
+  } else if (path.endsWith(".css")) {
+    contentType = "text/css";
+  } else if (path.endsWith(".html")) {
+    contentType = "text/html";
+  }
+  
+  if (LittleFS.exists(path)) {
+    File file = LittleFS.open(path, "r");
+    if (file) {
+      server.streamFile(file, contentType);
+      file.close();
+      return;
+    }
+  }
+  
+  // Fallback to index.html for SPA routing
+  if (LittleFS.exists("/index.html")) {
+    File file = LittleFS.open("/index.html", "r");
+    if (file) {
+      server.streamFile(file, "text/html");
+      file.close();
+      return;
+    }
+  }
+  
+  server.send(404, "text/plain", "Not Found");
+}
+
+// GET /api/boards/status - Get all boards and their ACTUAL status from RS-485
+void handleBoardsStatus() {
+  StaticJsonDocument<2048> doc;
+  JsonArray boardsArray = doc.createNestedArray();
+  
+  for (int i = 0; i < boardCount; i++) {
+    JsonObject b = boardsArray.createNestedObject();
+    b["address"] = boards[i].address;
+    b["name"] = boards[i].name;
+    b["product"] = boards[i].product;
+    b["online"] = boards[i].online;  // Current status from last poll
+    b["dispensing"] = boards[i].dispensing;
+    b["dispensedAmount"] = boards[i].dispensedAmount;
+    b["targetAmount"] = boards[i].targetAmount;
+    b["pulseCount"] = boards[i].pulseCount;
+  }
+  
+  String json;
+  serializeJson(doc, json);
+  server.send(200, "application/json", json);
+}
+
+// GET /api/health - Health check
+void handleHealth() {
+  server.send(200, "application/json", "{\"status\":\"ok\",\"board2_online\":" + String(boards[1].online ? "true" : "false") + "}");
+}
+
+// POST /api/boards/rename - Rename a board
+void handleBoardsRename() {
+  String body = server.arg("plain");
+  StaticJsonDocument<256> doc;
+  DeserializationError error = deserializeJson(doc, body);
+  
+  if (error) {
+    server.send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+    return;
+  }
+  
+  int address = doc["address"] | -1;
+  String newName = doc["name"] | "";
+  
+  if (address < 0 || address >= boardCount || newName.length() == 0) {
+    server.send(400, "application/json", "{\"error\":\"Invalid parameters\"}");
+    return;
+  }
+  
+  boards[address - 1].name = newName;
+  server.send(200, "application/json", "{\"status\":\"OK\"}");
+}
+
+// GET /api/products - Get all products
+void handleProductsList() {
+  StaticJsonDocument<2048> doc;
+  JsonArray arr = doc.createNestedArray("products");
+  
+  for (int i = 0; i < productCount; i++) {
+    JsonObject p = arr.createNestedObject();
+    p["id"] = products[i].id;
+    p["name"] = products[i].name;
+    p["pulsesPerLiter"] = products[i].pulsesPerLiter;
+    p["valveTime"] = products[i].valveTime;
+  }
+  
+  String json;
+  serializeJson(doc, json);
+  server.send(200, "application/json", json);
+}
+
+// POST /api/products - Add a new product
+void handleProductAdd() {
+  if (productCount >= 10) {
+    server.send(400, "application/json", "{\"error\":\"Max 10 products\"}");
+    return;
+  }
+  
+  String body = server.arg("plain");
+  StaticJsonDocument<512> doc;
+  DeserializationError error = deserializeJson(doc, body);
+  
+  if (error) {
+    server.send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+    return;
+  }
+  
+  products[productCount].id = productCount + 1;
+  products[productCount].name = doc["name"] | "Unknown";
+  products[productCount].pulsesPerLiter = doc["pulsesPerLiter"] | 450.0;
+  products[productCount].valveTime = doc["valveTime"] | 0.25;
+  
+  productCount++;
+  server.send(200, "application/json", "{\"status\":\"OK\"}");
+}
+
+// PUT /api/products/{id} - Update a product
+void handleProductUpdate() {
+  String path = server.uri();
+  int id = path.substring(path.lastIndexOf('/') + 1).toInt();
+  
+  if (id < 1 || id > productCount) {
+    server.send(404, "application/json", "{\"error\":\"Product not found\"}");
+    return;
+  }
+  
+  String body = server.arg("plain");
+  StaticJsonDocument<512> doc;
+  DeserializationError error = deserializeJson(doc, body);
+  
+  if (error) {
+    server.send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+    return;
+  }
+  
+  Product& p = products[id - 1];
+  if (doc.containsKey("name")) {
+    p.name = String(doc["name"].as<const char*>());
+  }
+  if (doc.containsKey("pulsesPerLiter")) {
+    p.pulsesPerLiter = doc["pulsesPerLiter"];
+  }
+  if (doc.containsKey("valveTime")) {
+    p.valveTime = doc["valveTime"];
+  }
+  
+  server.send(200, "application/json", "{\"status\":\"OK\"}");
+}
+
+// DELETE /api/products/{id} - Delete a product
+void handleProductDelete() {
+  String path = server.uri();
+  int id = path.substring(path.lastIndexOf('/') + 1).toInt();
+  
+  if (id < 1 || id > productCount) {
+    server.send(404, "application/json", "{\"error\":\"Product not found\"}");
+    return;
+  }
+  
+  for (int i = id - 1; i < productCount - 1; i++) {
+    products[i] = products[i + 1];
+    products[i].id--;
+  }
+  productCount--;
+  
+  server.send(200, "application/json", "{\"status\":\"OK\"}");
+}
+
+// POST /api/run/start - Start dispensing on a station
+void handleRunStart() {
+  String body = server.arg("plain");
+  StaticJsonDocument<256> doc;
+  DeserializationError error = deserializeJson(doc, body);
+  
+  if (error) {
+    server.send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+    return;
+  }
+  
+  int address = doc["address"] | -1;
+  
+  if (address < 1 || address > boardCount) {
+    server.send(400, "application/json", "{\"error\":\"Invalid address\"}");
+    return;
+  }
+  
+  boards[address - 1].dispensing = true;
+  boards[address - 1].dispensedAmount = 0;
+  boards[address - 1].pulseCount = 0;
+  
+  Serial.printf("[RUN] Starting board %d\n", address);
+  server.send(200, "application/json", "{\"status\":\"OK\",\"message\":\"Dispensing started\"}");
+}
+
+// POST /api/run/stop - Stop dispensing on a station
+void handleRunStop() {
+  String body = server.arg("plain");
+  StaticJsonDocument<256> doc;
+  DeserializationError error = deserializeJson(doc, body);
+  
+  if (error) {
+    server.send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+    return;
+  }
+  
+  int address = doc["address"] | -1;
+  
+  if (address < 1 || address > boardCount) {
+    server.send(400, "application/json", "{\"error\":\"Invalid address\"}");
+    return;
+  }
+  
+  boards[address - 1].dispensing = false;
+  
+  Serial.printf("[RUN] Stopped board %d\n", address);
+  server.send(200, "application/json", "{\"status\":\"OK\",\"message\":\"Dispensing stopped\"}");
+}
+
+// GET /api/status - General system status
+void handleStatus() {
+  StaticJsonDocument<512> doc;
+  doc["state"] = "OK";
+  doc["uptime"] = millis() / 1000;
+  doc["connectedStations"] = WiFi.softAPgetStationNum();
+  
+  int onlineBoards = 0;
+  for (int i = 0; i < boardCount; i++) {
+    if (boards[i].online) onlineBoards++;
+  }
+  doc["onlineBoards"] = onlineBoards;
+  
+  String json;
+  serializeJson(doc, json);
+  server.send(200, "application/json", json);
+}
+
+// ═══════════════════════════════════════════════════════
+// INITIALIZATION
+// ═══════════════════════════════════════════════════════
+
+void initializeBoards() {
+  // Initialize 4 stations - online status will be determined by RS-485 polling
+  boards[0] = {1, "Station 1 - Acid", "Acid", false, false, 0, 10.0, 0, 0};
+  boards[1] = {2, "Station 2 - Caustic", "Caustic", false, false, 0, 15.0, 0, 0};
+  boards[2] = {3, "Station 3 - Rinse Water", "Rinse Water", false, false, 0, 20.0, 0, 0};
+  boards[3] = {4, "Station 4 - Additive", "Additive", false, false, 0, 5.0, 0, 0};
+}
+
+void initializeProducts() {
+  products[0] = {1, "Acid", 450.0, 0.250};
+  products[1] = {2, "Caustic", 375.0, 0.300};
+  products[2] = {3, "Rinse Water", 500.0, 0.200};
+  products[3] = {4, "Additive", 1000.0, 0.150};
+  productCount = 4;
+}
+
+void initializeRS485() {
+  Serial.println("[*] Initializing RS-485 communication...");
+  
+  pinMode(RS485_RD_PIN, OUTPUT);
+  digitalWrite(RS485_RD_PIN, LOW);  // Start in RX mode
+  
+  rs485.begin(RS485_BAUD, SERIAL_8N1, RS485_RXD_PIN, RS485_TXD_PIN);
+  delay(100);
+  
+  Serial.printf("      RXD Pin: GPIO %d\n", RS485_RXD_PIN);
+  Serial.printf("      TXD Pin: GPIO %d\n", RS485_TXD_PIN);
+  Serial.printf("      RD Pin:  GPIO %d\n", RS485_RD_PIN);
+  Serial.printf("      Baud:    %d\n", RS485_BAUD);
+  Serial.println("      ✅ RS-485 ready\n");
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(2000);
+  
+  Serial.println("\n\n════════════════════════════════════════════════════");
+  Serial.println("        BATCH FLOW MASTER - STARTUP");
+  Serial.println("════════════════════════════════════════════════════\n");
+  
+  // Initialize data
+  initializeBoards();
+  initializeProducts();
+  
+  // Initialize RS-485
+  initializeRS485();
+  
+  // Initialize LittleFS
+  Serial.println("[1/6] Initializing LittleFS...");
+  if (!LittleFS.begin(true)) {
+    Serial.println("      ❌ LittleFS FAILED - will use default HTML\n");
+  } else {
+    Serial.println("      ✅ LittleFS initialized");
+    File root = LittleFS.open("/");
+    File file = root.openNextFile();
+    Serial.println("      Files available:");
+    int fileCount = 0;
+    while (file && fileCount < 20) {
+      Serial.printf("        ✓ %s (%d bytes)\n", file.name(), file.size());
+      fileCount++;
+      file = root.openNextFile();
+    }
+    Serial.println();
+  }
+  delay(500);
+  
+  // Disable Bluetooth
+  Serial.println("[2/6] Disabling Bluetooth...");
+  btStop();
+  Serial.println("      ✅ Done\n");
+  
+  // Disable WiFi sleep
+  Serial.println("[3/6] Configuring WiFi settings...");
+  WiFi.setSleep(false);
+  delay(500);
+  Serial.println("      ✅ WiFi sleep disabled\n");
+
+  // Start WiFi in AP mode
+  Serial.println("[4/6] Starting WiFi AP...");
+  WiFi.mode(WIFI_AP);
+  delay(500);
+  
+  // Explicitly configure AP with IP
+  IPAddress apIP(192, 168, 4, 1);
+  IPAddress subnet(255, 255, 255, 0);
+  WiFi.softAPConfig(apIP, apIP, subnet);
+  
+  bool apOk = WiFi.softAP("BatchFlow-Master", "batchflow123", 6, false, 4);
+  Serial.printf("      AP Start: %s\n", apOk ? "✅ SUCCESS" : "❌ FAILED");
+  Serial.printf("      IP Address: %s\n", WiFi.softAPIP().toString().c_str());
+  Serial.printf("      Subnet Mask: %s\n", WiFi.softAPSubnetMask().toString().c_str());
+  Serial.printf("      Max Clients: 4\n");
+  Serial.printf("      Broadcast Status: %s\n", WiFi.softAPgetStationNum() >= 0 ? "✅ ENABLED" : "❌ FAILED");
+  Serial.println();
+  delay(1000);
+  
+  // Setup web server routes
+  Serial.println("[5/6] Setting up web server routes...");
+  
+  // Static files
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/index.html", HTTP_GET, handleRoot);
+  server.on("/app.js", HTTP_GET, handleStaticFile);
+  server.on("/dashboard.js", HTTP_GET, handleStaticFile);
+  server.on("/batching.js", HTTP_GET, handleStaticFile);
+  server.on("/style.css", HTTP_GET, handleStaticFile);
+  server.on("/batching.html", HTTP_GET, handleStaticFile);
+  
+  // Health check
+  server.on("/api/health", HTTP_GET, handleHealth);
+  
+  // API Routes - Boards
+  server.on("/api/boards/status", HTTP_GET, handleBoardsStatus);
+  server.on("/api/boards/rename", HTTP_POST, handleBoardsRename);
+  
+  // API Routes - Products
+  server.on("/api/products", HTTP_GET, handleProductsList);
+  server.on("/api/products", HTTP_POST, handleProductAdd);
+  server.on("/api/products/1", HTTP_PUT, handleProductUpdate);
+  server.on("/api/products/2", HTTP_PUT, handleProductUpdate);
+  server.on("/api/products/3", HTTP_PUT, handleProductUpdate);
+  server.on("/api/products/4", HTTP_PUT, handleProductUpdate);
+  server.on("/api/products/1", HTTP_DELETE, handleProductDelete);
+  server.on("/api/products/2", HTTP_DELETE, handleProductDelete);
+  server.on("/api/products/3", HTTP_DELETE, handleProductDelete);
+  server.on("/api/products/4", HTTP_DELETE, handleProductDelete);
+  
+  // API Routes - Run/Dispense
+  server.on("/api/run/start", HTTP_POST, handleRunStart);
+  server.on("/api/run/stop", HTTP_POST, handleRunStop);
+  
+  // API Routes - Status
+  server.on("/api/status", HTTP_GET, handleStatus);
+  
+  // Catch-all for SPA
+  server.onNotFound(handleStaticFile);
+  
+  server.begin();
+  Serial.println("      ✅ 12 API routes registered\n");
+  
+  // Start monitoring
+  Serial.println("[6/6] Starting main loop...");
+  Serial.println("      ✅ Ready for connections\n");
+  
+  Serial.println("════════════════════════════════════════════════════");
+  Serial.println("           ✅ BATCH FLOW MASTER READY");
+  Serial.println("════════════════════════════════════════════════════");
+  Serial.println("\n📡 WiFi AP:  BatchFlow-Master");
+  Serial.println("🔐 Password: batchflow123");
+  Serial.println("🌐 Access:   http://192.168.4.1/");
+  Serial.println("📊 API:      http://192.168.4.1/api/boards/status");
+  Serial.println("════════════════════════════════════════════════════\n");
+  
+  delay(2000);  // Give WiFi time to stabilize before starting loop
+}
+
+void loop() {
+  server.handleClient();
+  yield();  // CRITICAL: Let WiFi run
+  
+  // Background RS-485 polling - keeps board status fresh without blocking API
+  static unsigned long lastPoll = 0;
+  if (millis() - lastPoll > 1000) {  // Poll every 1 second
+    lastPoll = millis();
+    pollAllBoards();  // Update all board statuses
+  }
+  
+  yield();  // CRITICAL: Let WiFi run again
+  
+  // Print status periodically
+  static unsigned long lastPrint = 0;
+  if (millis() - lastPrint > 15000) {
+    lastPrint = millis();
+    int connectedClients = WiFi.softAPgetStationNum();
+    Serial.printf("\n[%lu] Connected: %d client(s)\n", millis()/1000, connectedClients);
+    for (int i = 0; i < boardCount; i++) {
+      Serial.printf("  Board %d (%s): %s - %s\n", boards[i].address, boards[i].name.c_str(),
+                    boards[i].online ? "ONLINE" : "OFFLINE",
+                    boards[i].dispensing ? "DISPENSING" : "IDLE");
+    }
+    Serial.println();
+  }
+  
+  delayMicroseconds(100);  // Minimal yield
+}

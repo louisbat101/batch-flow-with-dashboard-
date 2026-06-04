@@ -68,15 +68,24 @@ void initializeProducts() {
 // ═══════════════════════════════════════════════════════
 
 void handleRoot() {
+  Serial.println("[Web] GET / requested");
+  
   if (LittleFS.exists("/index.html")) {
+    Serial.println("[Web] ✅ Found /index.html - serving");
     File file = LittleFS.open("/index.html", "r");
     if (file) {
       server.streamFile(file, "text/html");
       file.close();
       return;
+    } else {
+      Serial.println("[Web] ❌ Could not open /index.html");
     }
+  } else {
+    Serial.println("[Web] ❌ /index.html does not exist!");
   }
-  server.send(200, "text/html", "<h1>BatchFlow Master</h1><p>WiFi AP Running on 192.168.4.1</p>");
+  
+  // Fallback if files not found
+  server.send(200, "text/html", "<h1>BatchFlow Master</h1><p>✅ Web Server WORKS!</p><p>But /index.html not found in LittleFS</p>");
 }
 
 void handleBoardsStatus() {
@@ -140,12 +149,21 @@ void setup() {
   // Initialize LittleFS
   Serial.println("[1/4] Initializing LittleFS...");
   if (!LittleFS.begin(true)) {
-    Serial.println("      ⚠️  LittleFS mount failed - using default HTML\n");
+    Serial.println("      ❌ LittleFS FAILED - mount error\n");
   } else {
     Serial.println("      ✅ LittleFS initialized");
+    
+    // Check for index.html
+    if (LittleFS.exists("/index.html")) {
+      Serial.println("      ✅ Found /index.html");
+    } else {
+      Serial.println("      ❌ /index.html NOT FOUND - need to upload filesystem!");
+    }
+    
+    // List files
     File root = LittleFS.open("/");
     File file = root.openNextFile();
-    Serial.println("      Files available:");
+    Serial.println("      Files in LittleFS:");
     int fileCount = 0;
     while (file && fileCount < 20) {
       Serial.printf("        • %s (%d bytes)\n", file.name(), file.size());
@@ -163,22 +181,45 @@ void setup() {
   
   // Configure WiFi
   Serial.println("[3/4] Starting WiFi AP...");
+  
+  // Disable power saving features
   WiFi.setSleep(false);
+  WiFi.persistent(false);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);  // Max power
+  
+  // Reset WiFi completely
+  WiFi.disconnect(true);
+  delay(1000);
+  
+  // Set AP mode
   WiFi.mode(WIFI_AP);
   delay(500);
   
+  // Configure IP
   IPAddress apIP(192, 168, 4, 1);
+  IPAddress gateway(192, 168, 4, 1);
   IPAddress subnet(255, 255, 255, 0);
-  WiFi.softAPConfig(apIP, apIP, subnet);
+  WiFi.softAPConfig(apIP, gateway, subnet);
+  delay(500);
   
-  // Try AP with WPA2 authentication on channel 1
-  bool apOk = WiFi.softAP(WIFI_SSID, WIFI_PASSWORD, 1, false, 4);
-  Serial.printf("      AP Start: %s\n", apOk ? "✅ SUCCESS" : "❌ FAILED");
-  Serial.printf("      SSID: %s\n", WIFI_SSID);
+  // Start AP - try multiple times if needed
+  Serial.println("      Attempting to start AP...");
+  bool apOk = false;
+  for (int attempt = 0; attempt < 3; attempt++) {
+    apOk = WiFi.softAP(WIFI_SSID, WIFI_PASSWORD, 1, false);
+    Serial.printf("      Attempt %d: %s\n", attempt + 1, apOk ? "✅" : "❌");
+    if (apOk) break;
+    delay(500);
+  }
+  
+  delay(3000);  // Wait for AP to fully start
+  
+  Serial.println();
+  Serial.printf("      AP Final Status: %s\n", apOk ? "✅ BROADCASTING" : "❌ FAILED");
+  Serial.printf("      SSID: %s (should appear on tablet WiFi list)\n", WiFi.softAPSSID().c_str());
   Serial.printf("      Password: %s\n", WIFI_PASSWORD);
   Serial.printf("      IP Address: %s\n", WiFi.softAPIP().toString().c_str());
-  Serial.printf("      Subnet Mask: %s\n", WiFi.softAPSubnetMask().toString().c_str());
-  Serial.printf("      MAC Address: %s\n", WiFi.softAPmacAddress().c_str());
+  Serial.printf("      Clients: %d\n", WiFi.softAPgetStationNum());
   Serial.println();
   delay(1000);
   
