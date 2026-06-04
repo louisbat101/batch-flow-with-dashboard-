@@ -185,15 +185,15 @@ void setup() {
   // Disable power saving features
   WiFi.setSleep(false);
   WiFi.persistent(false);
-  WiFi.setTxPower(WIFI_POWER_19_5dBm);  // Max power
   
   // Reset WiFi completely
   WiFi.disconnect(true);
   delay(1000);
   
-  // Set AP mode
+  // Set AP mode FIRST, then set TX power (must have AP/STA started first)
   WiFi.mode(WIFI_AP);
   delay(500);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);  // Max power (after mode is set)
   
   // Configure IP
   IPAddress apIP(192, 168, 4, 1);
@@ -216,10 +216,9 @@ void setup() {
   
   Serial.println();
   Serial.printf("      AP Final Status: %s\n", apOk ? "✅ BROADCASTING" : "❌ FAILED");
-  Serial.printf("      SSID: %s (should appear on tablet WiFi list)\n", WiFi.softAPSSID().c_str());
+  Serial.printf("      SSID: %s\n", WIFI_SSID);
   Serial.printf("      Password: %s\n", WIFI_PASSWORD);
-  Serial.printf("      IP Address: %s\n", WiFi.softAPIP().toString().c_str());
-  Serial.printf("      Clients: %d\n", WiFi.softAPgetStationNum());
+  Serial.printf("      IP Address: 192.168.4.1\n");
   Serial.println();
   delay(1000);
   
