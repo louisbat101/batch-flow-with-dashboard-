@@ -3,10 +3,23 @@
 #include <WebServer.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
+#include "config.h"
 
 // WiFi AP Configuration
 #define WIFI_SSID         "BatchFlow-Master"
 #define WIFI_PASSWORD     "batchflow123"
+
+// UART Configuration for Teensy Link
+// Teensy Pin 1 (RX1) ← C3 GPIO 21 (TX)
+// Teensy Pin 2 (TX1) ← C3 GPIO 20 (RX)
+#define UART_RXD_PIN      20        // GPIO 20 - receives from Teensy
+#define UART_TXD_PIN      21        // GPIO 21 - sends to Teensy
+#define UART_BAUD         115200    // UART baud rate
+#define UART_BUFFER_SIZE  256
+
+HardwareSerial uartTeensy(1);  // UART1 on ESP32-C3
+uint8_t uartRxBuffer[UART_BUFFER_SIZE];
+int uartRxIndex = 0;
 
 WebServer server(80);
 
@@ -131,12 +144,89 @@ void handleNotFound() {
 }
 
 // ═══════════════════════════════════════════════════════
+// UART MESSAGE PARSING (from Teensy)
+// ═══════════════════════════════════════════════════════
+
+void parseUARTMessage(uint8_t *msg, int len) {
+  if (len < 3) return;  // Too short
+  
+  uint8_t cmd = msg[0];
+  uint8_t dataLen = msg[1];
+  
+  if (cmd == 0x01) {  // Status Report from Teensy
+    if (dataLen >= 15) {
+      uint8_t boardAddr = msg[2];
+      if (boardAddr >= 1 && boardAddr <= 4) {
+        Board &board = boards[boardAddr - 1];
+        
+        board.address = boardAddr;
+        board.online = (msg[3] != 0);  // status byte
+        board.dispensing = (msg[3] == 2);  // 2 = dispensing
+        
+        // Read target liters (4-byte float)
+        memcpy(&board.targetAmount, &msg[4], 4);
+        
+        // Read dispensed liters (4-byte float)
+        memcpy(&board.dispensedAmount, &msg[8], 4);
+        
+        // Valve state
+        bool valveOpen = msg[12] != 0;
+        
+        // Pulse count (4-byte uint32)
+        memcpy(&board.pulseCount, &msg[13], 4);
+        
+        board.lastPollTime = millis();
+        
+        Serial.printf("[UART] Board %d: online=%d, target=%.1f L, dispensed=%.1f L, pulses=%d\n",
+          boardAddr, board.online, board.targetAmount, board.dispensedAmount, board.pulseCount);
+      }
+    }
+  }
+}
+
+void readUARTMessages() {
+  while (uartTeensy.available()) {
+    uint8_t byte = uartTeensy.read();
+    
+    if (byte == 0xFF && uartRxIndex == 0) {
+      // Start of message
+      uartRxBuffer[uartRxIndex++] = byte;
+    } else if (uartRxIndex > 0) {
+      uartRxBuffer[uartRxIndex++] = byte;
+      
+      // Check for end marker
+      if (byte == 0xFE && uartRxIndex >= 4) {
+        // Parse complete message (skip start 0xFF and end 0xFE)
+        uint8_t cmd = uartRxBuffer[1];
+        uint8_t dataLen = uartRxBuffer[2];
+        
+        if (uartRxIndex == (dataLen + 4)) {  // +4 for [START][CMD][LEN][END]
+          parseUARTMessage(&uartRxBuffer[1], dataLen + 1);
+        }
+        
+        uartRxIndex = 0;  // Reset for next message
+      }
+      
+      // Prevent buffer overflow
+      if (uartRxIndex >= UART_BUFFER_SIZE) {
+        uartRxIndex = 0;
+      }
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
 // SETUP
 // ═══════════════════════════════════════════════════════
 
 void setup() {
   Serial.begin(115200);
   delay(2000);
+  
+  // Disable USB JTAG to free up GPIO 20/21
+  #if CONFIG_IDF_TARGET_ESP32C3
+  ESP_LOGI("init", "Disabling USB JTAG interface to use GPIO 20/21");
+  #endif
   
   Serial.println("\n\n════════════════════════════════════════════════════");
   Serial.println("        BATCH FLOW MASTER - WiFi Only");
@@ -179,7 +269,13 @@ void setup() {
   btStop();
   Serial.println("      ✅ Done\n");
   
-  // Configure WiFi
+  // Initialize UART link to Teensy
+  Serial.println("[2b/4] Initializing UART link to Teensy...");
+  uartTeensy.begin(UART_BAUD, SERIAL_8N1, UART_RXD_PIN, UART_TXD_PIN);
+  uartTeensy.setRxBufferSize(UART_BUFFER_SIZE);
+  Serial.printf("      ✅ UART2 running at %d baud (RX=GPIO%d, TX=GPIO%d)\n", 
+    UART_BAUD, UART_RXD_PIN, UART_TXD_PIN);
+  Serial.println();
   Serial.println("[3/4] Starting WiFi AP...");
   
   // Disable power saving features
@@ -245,6 +341,9 @@ void setup() {
 void loop() {
   // Handle web server client requests
   server.handleClient();
+  
+  // Read incoming UART messages from Teensy
+  readUARTMessages();
   
   // Print connection status periodically
   static unsigned long lastPrint = 0;

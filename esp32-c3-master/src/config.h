@@ -14,15 +14,16 @@
 #define WIFI_AP_PASS     "batchflow123"
 #define WIFI_AP_PORT     80
 
-// ── RS-485 Pins (ESC3E05 Expansion Board with built-in RS-485) ──────
-// GPIO 2 = TX (transmits RS-485 data)
-// GPIO 3 = RX (receives RS-485 data)
-// GPIO 9 = RD (DE/RE direction control)
-// NOTE: GPIO 0 is bootstrap pin, CANNOT use for UART!
-#define RS485_RXD_PIN     3       // GPIO 3 (RX)
-#define RS485_TXD_PIN     2       // GPIO 2 (TX)
-#define RS485_RD_PIN      9       // Direction control (DE/RE)
-#define RS485_BAUD        9600    // Modbus RTU standard
+// ── UART to Teensy (Status Link) ─────────────────────────
+// Teensy Pin 1 (RX1) ← C3 GPIO 21 (TX)
+// Teensy Pin 2 (TX1) ← C3 GPIO 20 (RX)
+#define UART_RXD_PIN      20        // GPIO 20 - receives status from Teensy TX1
+#define UART_TXD_PIN      21        // GPIO 21 - sends acks to Teensy RX1
+#define UART_BAUD         115200
+#define UART_BUFFER_SIZE  256
+
+// ── RS-485 Pins (NOT USED on C3 Master - only on Slaves) ──────
+// (Kept for reference only - C3 Master does NOT communicate via RS-485)
 
 // ── WS2811/NeoPixel Status LED ──────────────────────────
 #define NEOPIXEL_PIN      4       // GPIO 4 (WS2811 data line, 5V)

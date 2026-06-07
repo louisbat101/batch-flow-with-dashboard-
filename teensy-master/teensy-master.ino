@@ -6,9 +6,11 @@
 
 
 
-#include <Arduino.h>#include <Arduino.h>
-
+#include <Arduino.h>
 #include <ArduinoJson.h>
+
+// Include UART send functions
+#include "uart_send.h"
 
 // ═══════════════════════════════════════════════════════
 
@@ -25,6 +27,16 @@
 #define RS485_BAUD        9600    // Modbus RTU baud rate#define RS485_DE_PIN      11      // DE/RE (Direction Control)
 
 #define RS485_BAUD        9600    // Modbus RTU baud rate
+
+// ═══════════════════════════════════════════════════════
+// UART CONFIGURATION – Teensy ↔ ESP32-C3 Master
+// ═══════════════════════════════════════════════════════
+
+// Teensy Pin 1 (RX1) ← C3 GPIO 21 (TX)
+// Teensy Pin 2 (TX1) ← C3 GPIO 20 (RX)
+#define UART_RXD_PIN      0       // Serial1 RX (pin 0/RX1, receiver from C3 GPIO 20)
+#define UART_TXD_PIN      1       // Serial1 TX (pin 1/TX1, transmitter to C3 GPIO 21)
+#define UART_BAUD         115200  // Fast UART for local link
 
 // ═══════════════════════════════════════════════════════
 
@@ -441,6 +453,12 @@ void setup() {
   // Initialize RS-485
   initializeRS485();
   
+  // Initialize UART to C3 Master
+  Serial.println("[0/3] Initializing UART to C3 Master...");
+  Serial1.begin(UART_BAUD);
+  Serial.printf("      ✅ UART1 running at %d baud (TX=Pin %d)\n", UART_BAUD, UART_TXD_PIN);
+  Serial.println();
+  
   // Configure WiFi AP
   Serial.println("[1/3] Configuring WiFi AP...");
   WiFi.mode(WIFI_AP);
@@ -485,6 +503,9 @@ void loop() {
   if (millis() - lastPoll > 1000) {
     lastPoll = millis();
     pollAllBoards();
+    
+    // Send status updates to C3 Master after polling
+    sendAllBoardStatusToC3();
   }
   
   yield();  // CRITICAL: Let WiFi run again
