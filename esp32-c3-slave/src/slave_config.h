@@ -1,9 +1,7 @@
-#pragma once
-
 // ═══════════════════════════════════════════════════════════════════════
 // ESP32-C3 Super Mini + ESC3E05 4-Channel Relay Expansion Board
 // Pinout reference: CH1-CH4(Relay DO) → GPIO 5/6/7/10
-//                   RD/RXD/TXD(RS485) → GPIO 9/3/2 (Receive Enable, RX, TX)
+//                   RS485 on GPIO 20/21/9 (RXD/TXD/RD)
 // ═══════════════════════════════════════════════════════════════════════
 
 // ── Slave Address ────────────────────────────────────
@@ -21,12 +19,13 @@
 #define CONFIG_AP_PORT       80
 
 // ── RS-485 Pins (ESC3E05 Expansion Board with built-in RS-485) ──────
-// GPIO 2 = TX (transmits RS-485 data)
-// GPIO 3 = RX (receives RS-485 data)
-// GPIO 9 = RD (DE/RE direction control)
+// CORRECT pins for ESC3E05 expansion board:
+// GPIO 20 = RXD (receive RS-485 data)
+// GPIO 21 = TXD (transmit RS-485 data)
+// GPIO 9  = RD  (DE/RE direction control)
 // NOTE: GPIO 0 is bootstrap pin, CANNOT use for UART!
-#define RS485_RXD_PIN     3       // GPIO 3 (RX)
-#define RS485_TXD_PIN     2       // GPIO 2 (TX)
+#define RS485_RXD_PIN     20      // GPIO 20 (RX) - CORRECT for ESC3E05
+#define RS485_TXD_PIN     21      // GPIO 21 (TX) - CORRECT for ESC3E05
 #define RS485_RD_PIN      9       // Direction control (DE/RE)
 #define RS485_BAUD        9600    // Modbus RTU standard
 

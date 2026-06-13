@@ -1,25 +1,26 @@
 #include <Arduino.h>
 #include <HardwareSerial.h>
+#include "slave_config.h"
 
 // ═══════════════════════════════════════════════════════
-// RS-485 CONFIGURATION (MUST MATCH MASTER)
+// RS-485 CONFIGURATION (from slave_config.h)
 // ═══════════════════════════════════════════════════════
-#define RS485_RXD_PIN     20      // GPIO 20 (RXD) - CORRECT PIN
-#define RS485_TXD_PIN     21      // GPIO 21 (TXD) - CORRECT PIN
-#define RS485_RD_PIN      9       // GPIO 9 (RD/DE Direction Control) - REQUIRED!
-#define RS485_BAUD        9600    // Modbus RTU baud rate
+// RS485_RXD_PIN = 20, RS485_TXD_PIN = 21, RS485_RD_PIN = 9
+// RS485_BAUD = 9600
+
+#ifndef SLAVE_ADDRESS
 #define SLAVE_ADDRESS     2       // Slave address (1=master, 2-4=slaves)
+#endif
 
 HardwareSerial rs485(1);
 
 // ═══════════════════════════════════════════════════════
-// VALVE / RELAY / FLOWMETER PINS
+// VALVE / RELAY / FLOWMETER PINS (from slave_config.h)
 // ═══════════════════════════════════════════════════════
-#define RELAY_CH1_PIN     5       // Relay CH1 → valve
-#define RELAY_CH2_PIN     6       // Relay CH2 (optional)
-#define RELAY_CH3_PIN     7       // Relay CH3 (optional)
-#define RELAY_CH4_PIN     10      // Relay CH4 (optional)
-#define FLOWMETER_PIN     8       // GPIO 8: flowmeter pulse input
+// RELAY_CH1_PIN = 5, RELAY_CH2_PIN = 6, RELAY_CH3_PIN = 7, RELAY_CH4_PIN = 10
+// FLOWMETER_PIN = 8
+
+#define PULSES_PER_LITER  450.0f  // Default calibration - adjustable via FC06
 
 volatile uint32_t flowPulseCount = 0;
 
@@ -44,12 +45,13 @@ uint16_t crc16(uint8_t* data, int len) {
 }
 
 // Input registers for this slave (status data)
+// Teensy expects dispensed in tenths of liters (e.g. 15 = 1.5 L)
 struct {
-  uint16_t status;        // Register 0: Board status
-  uint16_t flowrate;      // Register 1: Current flowrate
-  uint16_t dispensed;     // Register 2: Amount dispensed
-  uint16_t target;        // Register 3: Target amount
-} inputRegisters = {1, 0, 0, 0};  // Status = 1 (online)
+  uint16_t status;        // Register 0: Board status (0=offline, 1=idle, 2=dispensing)
+  uint16_t flowrate;      // Register 1: Current flowrate (pulses/sec)
+  uint16_t dispensed;     // Register 2: Amount dispensed (tenths of liters)
+  uint16_t target;        // Register 3: Target amount (tenths of liters)
+} inputRegisters = {1, 0, 0, 0};  // Status = 1 (idle/online)
 
 void handleModbusRequest(uint8_t* request, int len) {
   if (len < 8) {
@@ -282,9 +284,9 @@ void setup() {
   Serial.println("      ✅ RS-485 ready\n");
   
   Serial.println("[2/3] Initializing registers...");
-  inputRegisters.status = 1;      // Online
+  inputRegisters.status = 1;      // Online/idle
   inputRegisters.flowrate = 0;    // No flow
-  inputRegisters.dispensed = 0;   // Not dispensing
+  inputRegisters.dispensed = 0;   // Nothing dispensed
   inputRegisters.target = 0;      // No target
   Serial.println("      ✅ Registers initialized\n");
 
@@ -301,6 +303,7 @@ void setup() {
   pinMode(FLOWMETER_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(FLOWMETER_PIN), onFlowPulse, FALLING);
   Serial.printf("      ✅ Flowmeter ISR on GPIO %d\n", FLOWMETER_PIN);
+  Serial.printf("      ✅ Calibration: %.0f pulses/liter\n", PULSES_PER_LITER);
   
   Serial.println("[3/3] Entering main loop...");
   Serial.println("      Listening for Modbus requests...\n");
@@ -322,30 +325,31 @@ void loop() {
                   SLAVE_ADDRESS, rs485.available());
   }
   
-  // ── Update flowrate from real pulse count ────────────
+  // ── Update flowrate/dispensed from real pulse count ──
   static unsigned long lastFlowUpdate = 0;
-  static uint32_t lastPulseCount = 0;
   
   if (millis() - lastFlowUpdate > 1000) {  // Every 1 second
     lastFlowUpdate = millis();
     
     // Atomically read and reset pulse count
     noInterrupts();
-    uint32_t currentPulses = flowPulseCount;
+    uint32_t deltaPulses = flowPulseCount;
     flowPulseCount = 0;
     interrupts();
     
-    uint32_t deltaPulses = currentPulses;
     inputRegisters.flowrate = deltaPulses;  // pulses per second
     
-    // Update dispensed (assuming 450 pulses/L = 0.1L per 45 pulses = needs calibration)
-    // For now: track cumulative pulses in dispensed register (scaled)
-    if (deltaPulses > 0) {
-      inputRegisters.dispensed += deltaPulses;  // raw pulse count tracking
+    // Convert pulses to tenths of liters (matching Teensy's dispensedLiters = regDispensed / 10.0f)
+    if (deltaPulses > 0 && PULSES_PER_LITER > 0) {
+      // Accumulate float liters internally, store as tenths in register
+      static float dispensedLiters = 0.0f;
+      dispensedLiters += (float)deltaPulses / PULSES_PER_LITER;
+      inputRegisters.dispensed = (uint16_t)(dispensedLiters * 10.0f);
     }
     
-    if (deltaPulses > 0 || Serial.available()) {
-      Serial.printf("[Flow] pulses/sec=%u totalPulses=%u\n", deltaPulses, inputRegisters.dispensed);
+    if (deltaPulses > 0) {
+      Serial.printf("[Flow] pulses/sec=%u dispensed=%.1fL (reg=%u)\n", 
+                    deltaPulses, inputRegisters.dispensed / 10.0f, inputRegisters.dispensed);
     }
   }
   
