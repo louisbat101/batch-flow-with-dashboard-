@@ -1,64 +1,46 @@
 package com.batchloader.app;
 
-import android.Manifest;
 import android.annotation.SuppressLint;
-import android.content.BroadcastReceiver;
-import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
-import android.content.pm.PackageManager;
-import android.net.ConnectivityManager;
-import android.net.Network;
-import android.net.NetworkCapabilities;
-import android.net.NetworkRequest;
-import android.net.wifi.WifiConfiguration;
-import android.net.wifi.WifiInfo;
-import android.net.wifi.WifiManager;
-import android.net.wifi.WifiNetworkSpecifier;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
 import android.view.WindowManager;
 import android.webkit.WebChromeClient;
-import android.webkit.WebResourceError;
-import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
-import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
 
 import com.google.android.material.button.MaterialButton;
 
+import java.io.IOException;
+
 /**
- * Main Activity – Auto-connects to the ESP32 "BatchLoader" WiFi AP
- * and loads the web UI in a full-screen WebView.
+ * Main Activity – Runs a local web server and listens on RS-485
+ * for Modbus FC04 responses from the Teensy/C3 slave system.
+ * Displays the dashboard in a WebView.
  */
 public class MainActivity extends AppCompatActivity {
 
-    private static final String ESP_SSID     = "BatchLoader";
-    private static final String ESP_PASSWORD = "batch1234";
-    private static final String ESP_URL      = "http://192.168.4.1";
-    private static final int    PERM_REQ     = 100;
+    private static final int SERVER_PORT = 8080;
+    private static final String LOCAL_URL = "http://127.0.0.1:" + SERVER_PORT;
 
-    private WebView        webView;
-    private View           overlay;
-    private ProgressBar    spinner;
-    private TextView       statusText;
-    private TextView       subText;
+    private WebView webView;
+    private View overlay;
+    private ProgressBar spinner;
+    private TextView statusText;
+    private TextView subText;
     private MaterialButton btnRetry;
 
-    private Handler  handler = new Handler(Looper.getMainLooper());
-    private boolean  webLoaded = false;
-    private ConnectivityManager connMgr;
-    private ConnectivityManager.NetworkCallback networkCallback;
+    private Handler handler = new Handler(Looper.getMainLooper());
+    private boolean webLoaded = false;
+
+    private DashboardServer server;
+    private ModbusListener modbusListener;
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     //  Lifecycle
@@ -77,30 +59,22 @@ public class MainActivity extends AppCompatActivity {
         subText    = findViewById(R.id.subText);
         btnRetry   = findViewById(R.id.btnRetry);
 
-        connMgr = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
-
         setupWebView();
 
         btnRetry.setOnClickListener(v -> {
             btnRetry.setVisibility(View.GONE);
             spinner.setVisibility(View.VISIBLE);
-            startConnection();
+            startServices();
         });
 
-        // Check permissions, then connect
-        if (hasPermissions()) {
-            startConnection();
-        } else {
-            requestPerms();
-        }
+        startServices();
     }
 
     @Override
     protected void onDestroy() {
+        if (modbusListener != null) modbusListener.shutdown();
+        if (server != null) server.stop();
         super.onDestroy();
-        if (networkCallback != null && connMgr != null) {
-            try { connMgr.unregisterNetworkCallback(networkCallback); } catch (Exception ignored) {}
-        }
     }
 
     @Override
@@ -118,7 +92,6 @@ public class MainActivity extends AppCompatActivity {
 
     @SuppressLint("SetJavaScriptEnabled")
     private void setupWebView() {
-        // Clear all cached data so we always get fresh files from ESP32
         webView.clearCache(true);
         webView.clearHistory();
 
@@ -139,145 +112,57 @@ public class MainActivity extends AppCompatActivity {
                     showWebView();
                 }
             }
-
-            @Override
-            public void onReceivedError(WebView view, WebResourceRequest req, WebResourceError err) {
-                super.onReceivedError(view, req, err);
-                if (req.isForMainFrame()) {
-                    showError("Cannot reach Batch Loader", "Retrying…");
-                    handler.postDelayed(() -> webView.loadUrl(ESP_URL), 3000);
-                }
-            }
         });
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  WiFi Auto-Connect
+    //  Service Management
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    private void startConnection() {
-        setStatus("Connecting to Batch Loader…", "Looking for BatchLoader WiFi…");
+    private void startServices() {
+        setStatus("Starting server...", "Initializing...");
 
-        // Check if already on the right network
-        if (isOnEspWifi()) {
-            setStatus("Connected!", "Loading interface…");
-            handler.postDelayed(() -> webView.loadUrl(ESP_URL), 500);
+        // Step 1: Start local web server
+        try {
+            server = new DashboardServer();
+            server.start();
+            setStatus("Server running on port " + SERVER_PORT, "Starting RS-485 listener...");
+        } catch (IOException e) {
+            showError("Server failed: " + e.getMessage(), "Restart the app");
             return;
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            connectWifiModern();
-        } else {
-            connectWifiLegacy();
-        }
-    }
-
-    /**
-     * Android 10+ : use WifiNetworkSpecifier (no saved network needed)
-     */
-    private void connectWifiModern() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return;
-
-        setStatus("Connecting to BatchLoader…", "Requesting WiFi connection…");
-
-        WifiNetworkSpecifier specifier = new WifiNetworkSpecifier.Builder()
-                .setSsid(ESP_SSID)
-                .setWpa2Passphrase(ESP_PASSWORD)
-                .build();
-
-        NetworkRequest request = new NetworkRequest.Builder()
-                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-                .setNetworkSpecifier(specifier)
-                .build();
-
-        networkCallback = new ConnectivityManager.NetworkCallback() {
+        // Step 2: Start RS-485 listener
+        modbusListener = new ModbusListener(new ModbusListener.Listener() {
             @Override
-            public void onAvailable(@NonNull Network network) {
-                // Bind this process to use the ESP32 WiFi network
-                connMgr.bindProcessToNetwork(network);
-                handler.post(() -> {
-                    setStatus("Connected!", "Loading interface…");
-                    handler.postDelayed(() -> webView.loadUrl(ESP_URL), 800);
-                });
-            }
-
-            @Override
-            public void onUnavailable() {
-                handler.post(() -> showError("Could not connect to BatchLoader WiFi",
-                        "Make sure the ESP32 is powered on"));
-            }
-
-            @Override
-            public void onLost(@NonNull Network network) {
-                handler.post(() -> {
-                    if (!webLoaded) {
-                        showError("WiFi connection lost", "Retrying…");
-                        handler.postDelayed(() -> startConnection(), 2000);
-                    }
-                });
-            }
-        };
-
-        connMgr.requestNetwork(request, networkCallback);
-    }
-
-    /**
-     * Android 9 and below: use old WifiManager API
-     */
-    @SuppressWarnings("deprecation")
-    private void connectWifiLegacy() {
-        setStatus("Connecting to BatchLoader…", "Adding WiFi network…");
-
-        WifiManager wifiMgr = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
-        if (!wifiMgr.isWifiEnabled()) {
-            wifiMgr.setWifiEnabled(true);
-        }
-
-        WifiConfiguration conf = new WifiConfiguration();
-        conf.SSID = "\"" + ESP_SSID + "\"";
-        conf.preSharedKey = "\"" + ESP_PASSWORD + "\"";
-
-        int netId = wifiMgr.addNetwork(conf);
-        if (netId == -1) {
-            // Maybe already saved
-            for (WifiConfiguration existing : wifiMgr.getConfiguredNetworks()) {
-                if (existing.SSID != null && existing.SSID.equals("\"" + ESP_SSID + "\"")) {
-                    netId = existing.networkId;
-                    break;
+            public void onBoardUpdated(int address, ModbusListener.BoardData data) {
+                if (server != null) {
+                    server.updateBoard(address, data);
                 }
             }
-        }
 
-        if (netId != -1) {
-            wifiMgr.disconnect();
-            wifiMgr.enableNetwork(netId, true);
-            wifiMgr.reconnect();
+            @Override
+            public void onStatus(String msg) {
+                handler.post(() -> setStatus("RS-485: " + msg, ""));
+            }
 
-            // Wait a bit then try loading
-            setStatus("Connecting…", "Waiting for WiFi…");
-            handler.postDelayed(() -> {
-                if (isOnEspWifi()) {
-                    setStatus("Connected!", "Loading interface…");
-                    handler.postDelayed(() -> webView.loadUrl(ESP_URL), 500);
-                } else {
-                    showError("Could not connect to BatchLoader WiFi",
-                            "Make sure the ESP32 is powered on");
-                }
-            }, 5000);
+            @Override
+            public void onError(String msg) {
+                handler.post(() -> {
+                    setStatus("RS-485: " + msg, "Check wiring");
+                });
+            }
+        });
+
+        if (modbusListener.hasPort()) {
+            modbusListener.start();
+            setStatus("RS-485 listening on " + modbusListener.getPortName(), "Loading dashboard...");
         } else {
-            showError("Failed to add WiFi network", "Check your WiFi settings");
+            setStatus("No RS-485 port found", "Showing demo mode");
         }
-    }
 
-    @SuppressWarnings("deprecation")
-    private boolean isOnEspWifi() {
-        WifiManager wifiMgr = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
-        WifiInfo info = wifiMgr.getConnectionInfo();
-        if (info != null && info.getSSID() != null) {
-            String ssid = info.getSSID().replace("\"", "");
-            return ESP_SSID.equals(ssid);
-        }
-        return false;
+        // Step 3: Load dashboard
+        handler.postDelayed(() -> webView.loadUrl(LOCAL_URL), 1000);
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -290,55 +175,20 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void setStatus(String title, String sub) {
-        statusText.setText(title);
-        subText.setText(sub);
-        spinner.setVisibility(View.VISIBLE);
-        btnRetry.setVisibility(View.GONE);
+        handler.post(() -> {
+            statusText.setText(title);
+            subText.setText(sub);
+            spinner.setVisibility(View.VISIBLE);
+            btnRetry.setVisibility(View.GONE);
+        });
     }
 
     private void showError(String title, String sub) {
-        statusText.setText(title);
-        subText.setText(sub);
-        spinner.setVisibility(View.GONE);
-        btnRetry.setVisibility(View.VISIBLE);
-        overlay.setVisibility(View.VISIBLE);
-        webView.setVisibility(View.GONE);
-        webLoaded = false;
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  Permissions
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    private boolean hasPermissions() {
-        if (Build.VERSION.SDK_INT >= 33) {
-            return ContextCompat.checkSelfPermission(this,
-                    Manifest.permission.NEARBY_WIFI_DEVICES) == PackageManager.PERMISSION_GRANTED;
-        }
-        return ContextCompat.checkSelfPermission(this,
-                Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-    }
-
-    private void requestPerms() {
-        if (Build.VERSION.SDK_INT >= 33) {
-            ActivityCompat.requestPermissions(this,
-                    new String[]{ Manifest.permission.NEARBY_WIFI_DEVICES }, PERM_REQ);
-        } else {
-            ActivityCompat.requestPermissions(this,
-                    new String[]{ Manifest.permission.ACCESS_FINE_LOCATION }, PERM_REQ);
-        }
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int reqCode, @NonNull String[] perms, @NonNull int[] results) {
-        super.onRequestPermissionsResult(reqCode, perms, results);
-        if (reqCode == PERM_REQ) {
-            if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
-                startConnection();
-            } else {
-                showError("WiFi permission required",
-                        "Please grant permission in Settings");
-            }
-        }
+        handler.post(() -> {
+            statusText.setText(title);
+            subText.setText(sub);
+            spinner.setVisibility(View.GONE);
+            btnRetry.setVisibility(View.VISIBLE);
+        });
     }
 }

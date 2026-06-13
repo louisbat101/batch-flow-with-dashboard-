@@ -4,12 +4,12 @@
 
 var API = '';   // same origin – ESP32 serves this page
 
-// Mock data structure for boards
+// Mock data structure for boards — will be replaced by API data
 var boards = [
-  { id: 1, product: 'Acid (Product 1)', status: 'ONLINE', state: 'idle', indicator: 'online', name: 'Board 1' },
-  { id: 2, product: 'Caustic (Product 2)', status: 'Dispensing', state: 'dispensing', indicator: 'dispensing', name: 'Board 2' },
-  { id: 3, product: 'Rinse Water (Product 3)', status: 'OFFLINE', state: 'offline', indicator: 'offline', name: 'Board 3' },
-  { id: 4, product: 'Additive (Product 4)', status: 'ONLINE', state: 'idle', indicator: 'online', name: 'Board 4' }
+  { id: 1, product: '—', status: 'OFFLINE', state: 'offline', indicator: 'offline', name: 'Board 1' },
+  { id: 2, product: '—', status: 'OFFLINE', state: 'offline', indicator: 'offline', name: 'Board 2' },
+  { id: 3, product: '—', status: 'OFFLINE', state: 'offline', indicator: 'offline', name: 'Board 3' },
+  { id: 4, product: '—', status: 'OFFLINE', state: 'offline', indicator: 'offline', name: 'Board 4' }
 ];
 
 // Load data structure
@@ -24,25 +24,41 @@ var products = [
 
 var statsCounts = {
   totalBoards: 4,
-  onlineCount: 1,
-  dispensingCount: 1,
-  alarmsCount: 1
+  onlineCount: 0,
+  dispensingCount: 0,
+  alarmsCount: 0
 };
 
 var currentEditingBoard = null;
 
 function init() {
   updateDateTime();
-  renderBoardsGrid();
+  renderBoardsGrid();       // Show clean offline state immediately
   renderProductsTable();
   renderLoadTable();
   updateStats();
+  fetchVersion();
   
-  // Refresh every 2 seconds
+  // Refresh board status from API every 2 seconds
   setInterval(function() {
     updateDateTime();
     refreshBoardStatus();
   }, 2000);
+}
+
+function fetchVersion() {
+  fetch(API + '/api/version')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var ver = data.version || 'unknown';
+      var sidebarEl = document.getElementById('fw-version');
+      if (sidebarEl) sidebarEl.textContent = 'Teensy FW: v' + ver;
+      var settingsEl = document.getElementById('fw-version-sidebar');
+      if (settingsEl) settingsEl.textContent = 'v' + ver;
+    })
+    .catch(function(e) {
+      console.warn('Could not fetch version:', e);
+    });
 }
 
 function updateDateTime() {
@@ -437,12 +453,7 @@ function deleteBoard(boardId) {
 // RUN PAGE
 // ═══════════════════════════════════════════════════════════
 
-var runStations = [
-  { id: 1, name: 'Station 1 - Acid', product: 'Acid', target: 10.00, dispensed: 6.25, progress: 62, timeToDone: '01:25', running: true, done: false },
-  { id: 2, name: 'Station 2 - Caustic', product: 'Caustic', target: 15.00, dispensed: 15.00, progress: 100, timeToDone: 'Done', running: false, done: true },
-  { id: 3, name: 'Station 3 - Rinse Water', product: 'Rinse Water', target: 20.00, dispensed: 0.00, progress: 0, timeToDone: '--:--', running: false, done: false },
-  { id: 4, name: 'Station 4 - Additive', product: 'Additive', target: 5.00, dispensed: 2.10, progress: 42, timeToDone: '02:10', running: true, done: false }
-];
+var runStations = [];  // Populated from API on renderRunPage
 
 function renderRunPage() {
   var container = document.getElementById('run-stations-container');
@@ -542,10 +553,20 @@ function renderRunPage() {
 }
 
 function startStation(address) {
+  // Find the load for this address to get the target litres
+  var load = loadData.find(function(l) { return l.address == address; });
+  var litres = 0;
+  if (load && load.amount > 0) {
+    litres = load.amount;
+  } else {
+    alert('No load configured for Station ' + address);
+    return;
+  }
+  
   fetch(API + '/api/run/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ address: address })
+    body: JSON.stringify({ address: address, litres: litres })
   })
   .then(function(r) { return r.json(); })
   .then(function(data) {
@@ -566,10 +587,10 @@ function stopStation(address) {
   .then(function(r) { return r.json(); })
   .then(function(data) {
     console.log('Stop response:', data);
-    renderRunPage();  // Refresh display
+    renderRunPage();
   })
   .catch(function(e) {
-    alert('Error stopping station: ' + e);
+    console.error('Error stopping station:', e);
   });
 }
 
@@ -782,7 +803,6 @@ function saveProduct() {
       product.pulsesPerLiter = pulses;
       product.valveTime = valveTime;
     }
-    // In real system: PUT /api/products/{id}
   } else {
     // Add new
     var newId = products.length > 0 ? Math.max.apply(Math, products.map(function(p) { return p.id; })) + 1 : 1;
@@ -792,8 +812,21 @@ function saveProduct() {
       pulsesPerLiter: pulses,
       valveTime: valveTime
     });
-    // In real system: POST /api/products
   }
+  
+  // Persist to backend
+  fetch(API + '/api/products', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(products)
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    console.log('Products saved:', data);
+  })
+  .catch(function(e) {
+    console.error('Failed to save products:', e);
+  });
   
   renderProductsTable();
   closeProductModal();
@@ -803,8 +836,17 @@ function deleteProduct(productId) {
   if (!confirm('Delete this product? This cannot be undone.')) return;
   
   products = products.filter(function(p) { return p.id !== productId; });
+  
+  // Persist to backend
+  fetch(API + '/api/products', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(products)
+  })
+  .then(function(r) { return r.json(); })
+  .catch(function(e) { console.error('Failed to save after delete:', e); });
+  
   renderProductsTable();
-  // In real system: DELETE /api/products/{id}
 }
 
 function closeProductModal() {

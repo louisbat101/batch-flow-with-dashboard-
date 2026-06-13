@@ -4,12 +4,25 @@
 
 # Android build
 android-app/build/
+android-app/app/build/
 android-app/.gradle/
+android-app/local.properties
 *.apk
 *.aab
 
-# VS Code
+# Build caches and intermediates
+**/build/intermediates/
+**/build/outputs/
+**/build/tmp/
+**/build/generated/
+**/build/kotlin/
+**/build/classes/
+
+# IDE
+.idea/
+*.iml
 .vscode/
 
 # macOS
 .DS_Store
+

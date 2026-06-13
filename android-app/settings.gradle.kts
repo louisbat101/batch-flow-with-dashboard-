@@ -13,5 +13,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "BatchLoader"
+rootProject.name = "BatchFlow"
 include(":app")

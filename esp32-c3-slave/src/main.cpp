@@ -13,6 +13,21 @@
 HardwareSerial rs485(1);
 
 // ═══════════════════════════════════════════════════════
+// VALVE / RELAY / FLOWMETER PINS
+// ═══════════════════════════════════════════════════════
+#define RELAY_CH1_PIN     5       // Relay CH1 → valve
+#define RELAY_CH2_PIN     6       // Relay CH2 (optional)
+#define RELAY_CH3_PIN     7       // Relay CH3 (optional)
+#define RELAY_CH4_PIN     10      // Relay CH4 (optional)
+#define FLOWMETER_PIN     8       // GPIO 8: flowmeter pulse input
+
+volatile uint32_t flowPulseCount = 0;
+
+void IRAM_ATTR onFlowPulse() {
+  flowPulseCount++;
+}
+
+// ═══════════════════════════════════════════════════════
 // MODBUS RTU RESPONDER
 // ═══════════════════════════════════════════════════════
 
@@ -61,7 +76,96 @@ void handleModbusRequest(uint8_t* request, int len) {
   
   Serial.printf("[Modbus] Request from master: FC=%d\n", funcCode);
   
-  // Function Code 04: Read Input Registers
+  // ── Function Code 05: Write Single Coil (valve control) ──
+  if (funcCode == 0x05) {
+    uint16_t coilAddr = (request[2] << 8) | request[3];
+    bool coilValue = (request[4] == 0xFF);  // 0xFF00 = ON, 0x0000 = OFF
+    
+    Serial.printf("[Modbus] FC05: coil=0x%04X value=%d\n", coilAddr, coilValue);
+    
+    // Relay channels: if coilAddr matches a relay, toggle it
+    switch (coilAddr) {
+      case 0x0000:  // Valve/Relay CH1
+        digitalWrite(RELAY_CH1_PIN, coilValue ? HIGH : LOW);
+        inputRegisters.status = coilValue ? 2 : 1;  // 2=dispensing, 1=idle
+        break;
+      case 0x0001:  // Relay CH2
+        digitalWrite(RELAY_CH2_PIN, coilValue ? HIGH : LOW);
+        break;
+      case 0x0002:  // Relay CH3
+        digitalWrite(RELAY_CH3_PIN, coilValue ? HIGH : LOW);
+        break;
+      case 0x0003:  // Relay CH4
+        digitalWrite(RELAY_CH4_PIN, coilValue ? HIGH : LOW);
+        break;
+      default:
+        // Illegal coil address
+        uint8_t errResp[5];
+        errResp[0] = slaveAddr;
+        errResp[1] = funcCode | 0x80;
+        errResp[2] = 0x02;  // illegal data address
+        uint16_t ecrc = crc16(errResp, 3);
+        errResp[3] = ecrc & 0xFF;
+        errResp[4] = (ecrc >> 8) & 0xFF;
+        digitalWrite(RS485_RD_PIN, HIGH);
+        delay(2);
+        rs485.write(errResp, 5);
+        rs485.flush();
+        digitalWrite(RS485_RD_PIN, LOW);
+        return;
+    }
+    
+    // Echo request back as success response (standard Modbus)
+    digitalWrite(RS485_RD_PIN, HIGH);
+    delay(2);
+    rs485.write(request, 8);  // Echo same 8 bytes
+    rs485.flush();
+    digitalWrite(RS485_RD_PIN, LOW);
+    Serial.printf("[Modbus] ✅ FC05 done: coil=0x%04X %s\n", coilAddr, coilValue ? "ON" : "OFF");
+    return;
+  }
+  
+  // ── Function Code 06: Write Single Register ──
+  if (funcCode == 0x06) {
+    uint16_t regAddr = (request[2] << 8) | request[3];
+    uint16_t regValue = (request[4] << 8) | request[5];
+    
+    Serial.printf("[Modbus] FC06: reg=0x%04X val=0x%04X (%u)\n", regAddr, regValue, regValue);
+    
+    switch (regAddr) {
+      case 2:  // Register 2: set dispensed (for reset)
+        inputRegisters.dispensed = regValue;
+        break;
+      case 3:  // Register 3: set target
+        inputRegisters.target = regValue;
+        break;
+      default:
+        uint8_t errResp[5];
+        errResp[0] = slaveAddr;
+        errResp[1] = funcCode | 0x80;
+        errResp[2] = 0x02;
+        uint16_t ecrc = crc16(errResp, 3);
+        errResp[3] = ecrc & 0xFF;
+        errResp[4] = (ecrc >> 8) & 0xFF;
+        digitalWrite(RS485_RD_PIN, HIGH);
+        delay(2);
+        rs485.write(errResp, 5);
+        rs485.flush();
+        digitalWrite(RS485_RD_PIN, LOW);
+        return;
+    }
+    
+    // Echo with written value
+    digitalWrite(RS485_RD_PIN, HIGH);
+    delay(2);
+    rs485.write(request, 8);
+    rs485.flush();
+    digitalWrite(RS485_RD_PIN, LOW);
+    Serial.printf("[Modbus] ✅ FC06: reg 0x%04X = %u\n", regAddr, regValue);
+    return;
+  }
+  
+  // ── Function Code 04: Read Input Registers ──
   if (funcCode == 0x04) {
     uint16_t startAddr = (request[2] << 8) | request[3];
     uint16_t quantity = (request[4] << 8) | request[5];
@@ -183,6 +287,20 @@ void setup() {
   inputRegisters.dispensed = 0;   // Not dispensing
   inputRegisters.target = 0;      // No target
   Serial.println("      ✅ Registers initialized\n");
+
+  // ── Relay/Valve outputs ──────────────────────────────
+  Serial.println("[2b/3] Initializing relay/valve outputs...");
+  pinMode(RELAY_CH1_PIN, OUTPUT); digitalWrite(RELAY_CH1_PIN, LOW);
+  pinMode(RELAY_CH2_PIN, OUTPUT); digitalWrite(RELAY_CH2_PIN, LOW);
+  pinMode(RELAY_CH3_PIN, OUTPUT); digitalWrite(RELAY_CH3_PIN, LOW);
+  pinMode(RELAY_CH4_PIN, OUTPUT); digitalWrite(RELAY_CH4_PIN, LOW);
+  Serial.println("      ✅ Relay pins initialized (all OFF)\n");
+  
+  // ── Flowmeter pulse ISR ──────────────────────────────
+  Serial.println("[2c/3] Initializing flowmeter pulse input...");
+  pinMode(FLOWMETER_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(FLOWMETER_PIN), onFlowPulse, FALLING);
+  Serial.printf("      ✅ Flowmeter ISR on GPIO %d\n", FLOWMETER_PIN);
   
   Serial.println("[3/3] Entering main loop...");
   Serial.println("      Listening for Modbus requests...\n");
@@ -204,12 +322,31 @@ void loop() {
                   SLAVE_ADDRESS, rs485.available());
   }
   
-  // Simulate flowrate changes (for testing)
-  static unsigned long lastUpdate = 0;
-  if (millis() - lastUpdate > 5000) {
-    lastUpdate = millis();
-    inputRegisters.flowrate = random(0, 100);  // Random flowrate 0-100
-    Serial.printf("[Sim] Flowrate: %d\n", inputRegisters.flowrate);
+  // ── Update flowrate from real pulse count ────────────
+  static unsigned long lastFlowUpdate = 0;
+  static uint32_t lastPulseCount = 0;
+  
+  if (millis() - lastFlowUpdate > 1000) {  // Every 1 second
+    lastFlowUpdate = millis();
+    
+    // Atomically read and reset pulse count
+    noInterrupts();
+    uint32_t currentPulses = flowPulseCount;
+    flowPulseCount = 0;
+    interrupts();
+    
+    uint32_t deltaPulses = currentPulses;
+    inputRegisters.flowrate = deltaPulses;  // pulses per second
+    
+    // Update dispensed (assuming 450 pulses/L = 0.1L per 45 pulses = needs calibration)
+    // For now: track cumulative pulses in dispensed register (scaled)
+    if (deltaPulses > 0) {
+      inputRegisters.dispensed += deltaPulses;  // raw pulse count tracking
+    }
+    
+    if (deltaPulses > 0 || Serial.available()) {
+      Serial.printf("[Flow] pulses/sec=%u totalPulses=%u\n", deltaPulses, inputRegisters.dispensed);
+    }
   }
   
   delay(1);
