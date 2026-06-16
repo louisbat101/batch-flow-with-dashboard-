@@ -120,19 +120,9 @@ public class MainActivity extends AppCompatActivity {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     private void startServices() {
-        setStatus("Starting server...", "Initializing...");
+        setStatus("Starting services...", "Initializing...");
 
-        // Step 1: Start local web server
-        try {
-            server = new DashboardServer();
-            server.start();
-            setStatus("Server running on port " + SERVER_PORT, "Starting RS-485 listener...");
-        } catch (IOException e) {
-            showError("Server failed: " + e.getMessage(), "Restart the app");
-            return;
-        }
-
-        // Step 2: Start RS-485 listener
+        // Step 1: Create the Modbus RS-485 listener first
         modbusListener = new ModbusListener(new ModbusListener.Listener() {
             @Override
             public void onBoardUpdated(int address, ModbusListener.BoardData data) {
@@ -154,14 +144,25 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        // Step 2: Start local web server (pass ModbusListener for valve control)
+        try {
+            server = new DashboardServer(modbusListener);
+            server.start();
+            setStatus("Server running on port " + SERVER_PORT, "Starting RS-485 listener...");
+        } catch (IOException e) {
+            showError("Server failed: " + e.getMessage(), "Restart the app");
+            return;
+        }
+
+        // Step 3: Start RS-485 listener (Modbus master)
         if (modbusListener.hasPort()) {
             modbusListener.start();
-            setStatus("RS-485 listening on " + modbusListener.getPortName(), "Loading dashboard...");
+            setStatus("RS-485 active on " + modbusListener.getPortName(), "Loading dashboard...");
         } else {
             setStatus("No RS-485 port found", "Showing demo mode");
         }
 
-        // Step 3: Load dashboard
+        // Step 4: Load dashboard
         handler.postDelayed(() -> webView.loadUrl(LOCAL_URL), 1000);
     }
 

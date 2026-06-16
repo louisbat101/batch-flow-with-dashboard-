@@ -9,7 +9,7 @@
 // RS485_BAUD = 9600
 
 #ifndef SLAVE_ADDRESS
-#define SLAVE_ADDRESS     2       // Slave address (1=master, 2-4=slaves)
+#define SLAVE_ADDRESS     1       // Slave address (each C3 board set to 1-10)
 #endif
 
 HardwareSerial rs485(1);
@@ -110,18 +110,20 @@ void handleModbusRequest(uint8_t* request, int len) {
         errResp[3] = ecrc & 0xFF;
         errResp[4] = (ecrc >> 8) & 0xFF;
         digitalWrite(RS485_RD_PIN, HIGH);
-        delay(2);
+        delayMicroseconds(500);
         rs485.write(errResp, 5);
         rs485.flush();
+        delayMicroseconds(500);
         digitalWrite(RS485_RD_PIN, LOW);
         return;
     }
     
     // Echo request back as success response (standard Modbus)
     digitalWrite(RS485_RD_PIN, HIGH);
-    delay(2);
+    delayMicroseconds(500);
     rs485.write(request, 8);  // Echo same 8 bytes
     rs485.flush();
+    delayMicroseconds(500);
     digitalWrite(RS485_RD_PIN, LOW);
     Serial.printf("[Modbus] ✅ FC05 done: coil=0x%04X %s\n", coilAddr, coilValue ? "ON" : "OFF");
     return;
@@ -150,18 +152,20 @@ void handleModbusRequest(uint8_t* request, int len) {
         errResp[3] = ecrc & 0xFF;
         errResp[4] = (ecrc >> 8) & 0xFF;
         digitalWrite(RS485_RD_PIN, HIGH);
-        delay(2);
+        delayMicroseconds(500);
         rs485.write(errResp, 5);
         rs485.flush();
+        delayMicroseconds(500);
         digitalWrite(RS485_RD_PIN, LOW);
         return;
     }
     
     // Echo with written value
     digitalWrite(RS485_RD_PIN, HIGH);
-    delay(2);
+    delayMicroseconds(500);
     rs485.write(request, 8);
     rs485.flush();
+    delayMicroseconds(500);
     digitalWrite(RS485_RD_PIN, LOW);
     Serial.printf("[Modbus] ✅ FC06: reg 0x%04X = %u\n", regAddr, regValue);
     return;
@@ -184,9 +188,10 @@ void handleModbusRequest(uint8_t* request, int len) {
       response[4] = (crc >> 8) & 0xFF;
       
       digitalWrite(RS485_RD_PIN, HIGH);  // TX mode
-      delay(50);
+      delayMicroseconds(500);
       rs485.write(response, 5);
       rs485.flush();
+      delayMicroseconds(500);
       digitalWrite(RS485_RD_PIN, LOW);   // RX mode
       return;
     }
@@ -218,10 +223,10 @@ void handleModbusRequest(uint8_t* request, int len) {
     
     // Send response
     digitalWrite(RS485_RD_PIN, HIGH);  // TX mode
-    delay(50);
+    delayMicroseconds(500);
     rs485.write(response, respLen + 2);
     rs485.flush();
-    delay(50);
+    delayMicroseconds(500);
     digitalWrite(RS485_RD_PIN, LOW);   // RX mode
     
     Serial.printf("[Modbus] ✅ Response sent (regs %d-%d)\n", startAddr, startAddr + quantity - 1);

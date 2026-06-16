@@ -1,16 +1,34 @@
 package com.batchloader.app;
 
+import android.util.Log;
 import java.io.File;
+import java.io.FileDescriptor;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
+import java.lang.reflect.Field;
 import java.util.Arrays;
 
 /**
- * Listens to RS-485 traffic on the tablet's built-in serial port.
- * Parses Modbus FC04 responses (the slave's reply to Teensy polls).
+ * Modbus RTU Master on the tablet's built-in RS-485 port.
+ * Actively polls station boards (slaves 1-4) for FC04 status,
+ * and sends FC05 commands to open/close valves.
  */
 public class ModbusListener extends Thread {
+
+    private static final String TAG = "ModbusMaster";
+    
+    // Native method to enable RS-485 half-duplex mode on a serial port
+    private static native int enableRs485(String port);
+    
+    static {
+        try {
+            System.loadLibrary("rs485helper");
+            Log.d(TAG, "Native rs485helper library loaded");
+        } catch (UnsatisfiedLinkError e) {
+            Log.w(TAG, "rs485helper native library not available: " + e.getMessage());
+        }
+    }
 
     public static class BoardData {
         public int address;
@@ -39,30 +57,59 @@ public class ModbusListener extends Thread {
     private volatile boolean running = false;
     private Listener listener;
     private String serialPort;
+    private FileOutputStream serialOut;
+    private FileInputStream serialIn;
 
-    // Known built-in RS-485 ports on various tablets
+
+        // Known RS-485 ports in priority order
+    // USB-RS485 dongle (CH340) — confirmed working
+    // Native Rockchip UARTs (ttyS*) need TIOCSRS485 ioctl which Android blocks
     private static final String[] KNOWN_PORTS = {
-        "/dev/ttyS1", "/dev/ttyS2", "/dev/ttyS3", "/dev/ttyS4",
+        "/dev/ttyUSB0",   // USB-RS485 dongle — confirmed working
+        "/dev/ttyUSB1",
+        "/dev/ttyS7",     // Native rk3568 UART with RS-485 support (ioctl blocked)
+        "/dev/ttyS3",
+        "/dev/ttyS1", "/dev/ttyS4", "/dev/ttyS8",
+        "/dev/ttysWK0",   // WK2xxx SPI-UART
+        "/dev/ttysWK1", "/dev/ttysWK2", "/dev/ttysWK3",
+        "/dev/ttyS9",
         "/dev/ttyMT1", "/dev/ttyMT2",
         "/dev/ttyHSL0", "/dev/ttyHSL1",
-        "/dev/ttyUSB0", "/dev/ttyUSB1"
+        "/dev/ttyACM0", "/dev/ttyACM1"
     };
 
-    // Buffers for reading Modbus frames from each slave (1-4)
-    private byte[][] frameBuffers = new byte[5][32];
-    private int[] framePositions = new int[5];
-    private long[] lastByteTimes = new long[5];
+    // Poll timing
+    private static final int POLL_INTERVAL_MS = 350;   // ms between polls
+    private static final int RESPONSE_TIMEOUT_MS = 200; // wait for response
+
+    // Response buffer
+    private byte[] responseBuffer = new byte[32];
+    private int responsePos = 0;
+    private long responseStartTime = 0;
+    private int expectedAddr = 0;
+    private boolean waitingForResponse = false;
+    
+    // Last known board data (for reporting when boards go offline)
+    private BoardData[] lastData = new BoardData[5];
+    private long[] lastResponseTimes = new long[5];
+    private static final long OFFLINE_TIMEOUT_MS = 3000; // 3s no response = offline
+
+    // ── Transmit / Receive buffer for poll/write commands ──────
+    private final Object txLock = new Object();
 
     public ModbusListener(Listener listener) {
         this.listener = listener;
-        // Find the RS-485 port
+        for (int i = 1; i <= 4; i++) {
+            lastData[i] = new BoardData(i);
+            lastResponseTimes[i] = 0;
+        }
         this.serialPort = findSerialPort();
     }
 
     private String findSerialPort() {
         for (String port : KNOWN_PORTS) {
             File f = new File(port);
-            if (f.exists() && f.canRead()) {
+            if (f.exists()) {
                 return port;
             }
         }
@@ -77,120 +124,262 @@ public class ModbusListener extends Thread {
         return serialPort != null;
     }
 
+    // ── Public API to send Modbus commands ─────────────────────
+    
+    /**
+     * Send FC05 to open or close a valve on a specific station board.
+     * @param address  slave address (1-4)
+     * @param open     true = open valve, false = close valve
+     */
+    public void setValve(int address, boolean open) {
+        synchronized (txLock) {
+            if (serialOut == null) return;
+            
+            // FC05: [addr][0x05][coil_hi][coil_lo][value_hi][value_lo][CRC_lo][CRC_hi]
+            byte[] cmd = new byte[8];
+            cmd[0] = (byte) address;
+            cmd[1] = 0x05; // function code: write single coil
+            cmd[2] = 0x00; // coil address high (coil 0 = valve)
+            cmd[3] = 0x00; // coil address low
+            cmd[4] = (byte) (open ? 0xFF : 0x00); // 0xFF00 = ON, 0x0000 = OFF
+            cmd[5] = 0x00;
+            
+            int crc = calcCRC16(cmd, 6);
+            cmd[6] = (byte) (crc & 0xFF);
+            cmd[7] = (byte) ((crc >> 8) & 0xFF);
+            
+            try {
+                serialOut.write(cmd);
+                serialOut.flush();
+                if (listener != null) {
+                    listener.onStatus("FC05 valve " + (open ? "OPEN" : "CLOSE") + " → addr " + address);
+                }
+            } catch (IOException e) {
+                if (listener != null) listener.onError("FC05 write error: " + e.getMessage());
+            }
+        }
+    }
+
     @Override
     public void run() {
         if (serialPort == null) {
+            Log.e(TAG, "No serial port found");
             if (listener != null) listener.onError("No RS-485 port found");
             return;
         }
 
         running = true;
+        Log.d(TAG, "Opening " + serialPort + " @ 9600 8N1");
         if (listener != null) listener.onStatus("Opening " + serialPort + " @ 9600 baud...");
 
-        // Clear buffers
-        for (int i = 0; i < 5; i++) {
-            framePositions[i] = 0;
-            lastByteTimes[i] = 0;
-        }
+        try {
+            // Open both streams for read/write
+            serialIn = new FileInputStream(serialPort);
+            serialOut = new FileOutputStream(serialPort);
+            Log.d(TAG, "Port opened successfully");
 
-        // Open the serial port
-        try (FileInputStream serialIn = new FileInputStream(serialPort)) {
-            // Configure port to 9600 8N1 via shell (requires root on some tablets)
+            // Try to enable RS-485 half-duplex mode via native helper
             try {
-                Runtime.getRuntime().exec(new String[]{
-                    "stty", "-F", serialPort, "9600", "cs8", "-cstopb", "-parenb"
-                }).waitFor();
-            } catch (Exception ignored) {}
+                int result = enableRs485(serialPort);
+                if (result == 0) {
+                    Log.d(TAG, "RS-485 half-duplex mode ENABLED on " + serialPort);
+                } else {
+                    Log.w(TAG, "RS-485 ioctl failed with result " + result + " on " + serialPort + 
+                          " (may not support half-duplex)");
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "RS-485 enable failed (will try without half-duplex): " + e.getMessage());
+            }
 
-            if (listener != null) listener.onStatus("Listening on RS-485...");
+            // Configure port to 9600 8N1 via shell
+            try {
+                String[] cmd = {"stty", "-F", serialPort, "9600", "cs8", "-cstopb", "-parenb", "raw", "-echo"};
+                Log.d(TAG, "Running: " + String.join(" ", cmd));
+                Process p = Runtime.getRuntime().exec(cmd);
+                int exitCode = p.waitFor();
+                Log.d(TAG, "stty exit code: " + exitCode);
+                // Read stderr to see if there were errors
+                java.io.InputStream err = p.getErrorStream();
+                java.util.Scanner s = new java.util.Scanner(err).useDelimiter("\\A");
+                String stderr = s.hasNext() ? s.next() : "";
+                if (!stderr.isEmpty()) Log.w(TAG, "stty stderr: " + stderr);
+            } catch (Exception e) {
+                Log.w(TAG, "stty failed: " + e.getMessage());
+            }
 
-            byte[] buffer = new byte[256];
-            int pos = 0;
+            Log.d(TAG, "Modbus Master active on RS-485");
+            if (listener != null) listener.onStatus("Modbus Master active on RS-485");
 
+            int pollAddr = 1;
+            int pollCount = 0;
+            
             while (running) {
-                int bytesRead = serialIn.read(buffer, 0, buffer.length);
-                if (bytesRead > 0) {
-                    for (int i = 0; i < bytesRead; i++) {
-                        processByte(buffer[i] & 0xFF);
-                    }
+                // Send FC04 poll request to current address
+                Log.v(TAG, "Polling addr " + pollAddr + " (poll #" + pollCount + ")");
+                sendFC04Poll(pollAddr);
+                
+                // Wait for and read response
+                if (waitForResponse(pollAddr)) {
+                    Log.d(TAG, "Got response from addr " + pollAddr);
+                } else {
+                    Log.v(TAG, "No response from addr " + pollAddr + " (timeout)");
+                    markOffline(pollAddr);
                 }
-
-                // Check for stale frames (nothing received for 100ms → discard partial)
-                long now = System.currentTimeMillis();
-                for (int a = 1; a <= 4; a++) {
-                    if (framePositions[a] > 0 && (now - lastByteTimes[a]) > 200) {
-                        framePositions[a] = 0;
-                    }
-                }
+                
+                // Move to next board
+                pollAddr = (pollAddr % 4) + 1;
+                pollCount++;
+                
+                // Check all boards for stale status
+                checkStaleBoards();
             }
 
         } catch (IOException e) {
+            Log.e(TAG, "RS-485 IO error: " + e.getMessage());
+            e.printStackTrace();
             if (listener != null) listener.onError("RS-485 error: " + e.getMessage());
+        } finally {
+            try { if (serialIn != null) serialIn.close(); } catch (Exception ignored) {}
+            try { if (serialOut != null) serialOut.close(); } catch (Exception ignored) {}
+            Log.d(TAG, "Modbus thread ended");
         }
     }
 
-    private void processByte(int b) {
-        // Determine which slave address this could belong to.
-        // Modbus FC04 frames:
-        //   Request:  [addr][0x04][start_hi][start_lo][qty_hi][qty_lo][CRC_lo][CRC_hi]
-        //   Response: [addr][0x04][byteCount][data...][CRC_lo][CRC_hi]
-        //
-        // The Teensy polls addresses 1-4. The response starts with the slave address.
-        // Since frames come sequentially (poll addr 1, response, poll addr 2, response...),
-        // we can use the address byte to identify which slave.
+    private void sendFC04Poll(int addr) {
+        synchronized (txLock) {
+            if (serialOut == null) return;
+            
+            // FC04 read input registers: [addr][0x04][start_hi][start_lo][qty_hi][qty_lo][CRC_lo][CRC_hi]
+            // Read 4 registers starting at 0 (status, flowrate, dispensed, target)
+            byte[] cmd = new byte[8];
+            cmd[0] = (byte) addr;
+            cmd[1] = 0x04;
+            cmd[2] = 0x00; // start register high
+            cmd[3] = 0x00; // start register low
+            cmd[4] = 0x00; // quantity high (4 registers)
+            cmd[5] = 0x04; // quantity low
+            
+            int crc = calcCRC16(cmd, 6);
+            cmd[6] = (byte) (crc & 0xFF);
+            cmd[7] = (byte) ((crc >> 8) & 0xFF);
+            
+            try {
+                serialOut.write(cmd);
+                serialOut.flush();
+            } catch (IOException e) {
+                if (listener != null) listener.onError("FC04 write error: " + e.getMessage());
+            }
+        }
+        
+        // Prepare to receive response
+        responsePos = 0;
+        expectedAddr = addr;
+        waitingForResponse = true;
+        responseStartTime = System.currentTimeMillis();
+    }
 
-        // Check if this looks like a start of a Modbus response frame
-        // (byte 1 should be 0x04 for FC04 response)
-        if (framePositions[0] == 0) {
-            // First byte - is it a valid slave address?
-            if (b >= 1 && b <= 4) {
-                framePositions[0] = b; // Store address temporarily
-                return;
+    private boolean waitForResponse(int addr) {
+        // Read bytes for up to RESPONSE_TIMEOUT_MS
+        while (running && waitingForResponse) {
+            long elapsed = System.currentTimeMillis() - responseStartTime;
+            if (elapsed > RESPONSE_TIMEOUT_MS) {
+                waitingForResponse = false;
+                return false;
+            }
+            
+            try {
+                int remaining = (int)(RESPONSE_TIMEOUT_MS - elapsed);
+                if (remaining <= 0) break;
+                
+                if (serialIn.available() > 0) {
+                    byte[] buf = new byte[32];
+                    int read = serialIn.read(buf, 0, Math.min(buf.length, remaining > 0 ? 32 : 0));
+                    
+                    if (read > 0) {
+                        for (int i = 0; i < read; i++) {
+                            processRxByte(buf[i] & 0xFF);
+                        }
+                        // If we completed parsing, done waiting
+                        if (!waitingForResponse) return true;
+                    }
+                } else {
+                    // Brief sleep to avoid busy-waiting
+                    try { Thread.sleep(5); } catch (InterruptedException ie) { break; }
+                }
+            } catch (IOException e) {
+                waitingForResponse = false;
+                return false;
+            }
+        }
+        waitingForResponse = false;
+        return false;
+    }
+
+    private void processRxByte(int b) {
+        if (!waitingForResponse) return;
+        
+        if (responsePos == 0) {
+            // First byte: slave address – must match expected
+            if (b == expectedAddr) {
+                responseBuffer[responsePos++] = (byte) b;
+            } else {
+                // Not for us, discard
+                responsePos = 0;
             }
             return;
         }
-
-        int addr = framePositions[0];
         
-        if (framePositions[addr] == 0) {
-            // Second byte - should be 0x04 for FC04 response
+        if (responsePos == 1) {
+            // Second byte: function code – must be 0x04
             if (b == 0x04) {
-                framePositions[addr] = 1;
-                frameBuffers[addr][0] = (byte)addr;
-                frameBuffers[addr][1] = (byte)b;
+                responseBuffer[responsePos++] = (byte) b;
             } else {
-                framePositions[0] = 0; // Not a valid FC04 response
+                responsePos = 0; // Wrong function code
+                waitingForResponse = false; // Stop waiting
             }
             return;
         }
 
         // Collect remaining bytes
-        int pos = framePositions[addr];
-        if (pos < 32) {
-            frameBuffers[addr][pos] = (byte)b;
-            framePositions[addr]++;
-            lastByteTimes[addr] = System.currentTimeMillis();
-
-            // Minimum FC04 response: addr(1) + FC04(1) + byteCount(1) + data(8) + CRC(2) = 13 bytes
-            if (pos >= 12) { // pos is 0-indexed, so pos=12 means we have 13 bytes
-                int totalLen = framePositions[addr];
-                if (totalLen >= 13) {
-                    int byteCount = frameBuffers[addr][2] & 0xFF;
-                    int expectedLen = 3 + byteCount + 2; // header + data + CRC
-
-                    if (totalLen == expectedLen) {
-                        // Validate CRC
-                        if (validateCRC(frameBuffers[addr], totalLen)) {
-                            parseResponse(addr);
-                        }
-                        framePositions[addr] = 0;
-                        framePositions[0] = 0;
-                    } else if (totalLen > expectedLen) {
-                        // Overshoot - discard
-                        framePositions[addr] = 0;
-                        framePositions[0] = 0;
+        if (responsePos < responseBuffer.length) {
+            responseBuffer[responsePos++] = (byte) b;
+            
+            // Check if we have enough bytes to determine expected length
+            if (responsePos >= 3) {
+                int byteCount = responseBuffer[2] & 0xFF;
+                int expectedLen = 3 + byteCount + 2; // addr(1) + FC(1) + byteCount(1) + data(N) + CRC(2)
+                
+                if (responsePos == expectedLen) {
+                    waitingForResponse = false;
+                    // Validate CRC and parse
+                    if (validateCRC(responseBuffer, responsePos)) {
+                        parseResponse(expectedAddr);
                     }
+                } else if (responsePos > expectedLen) {
+                    waitingForResponse = false; // Overshoot – discard
                 }
+            }
+        } else {
+            waitingForResponse = false; // Buffer full – discard
+        }
+    }
+
+    private void markOffline(int addr) {
+        if (addr >= 1 && addr <= 4) {
+            BoardData data = new BoardData(addr);
+            data.online = false;
+            if (listener != null) {
+                listener.onBoardUpdated(addr, data);
+            }
+        }
+    }
+
+    private void checkStaleBoards() {
+        long now = System.currentTimeMillis();
+        for (int a = 1; a <= 4; a++) {
+            if (lastResponseTimes[a] > 0 && (now - lastResponseTimes[a]) > OFFLINE_TIMEOUT_MS) {
+                lastResponseTimes[a] = 0;
+                markOffline(a);
             }
         }
     }
@@ -219,7 +408,7 @@ public class ModbusListener extends Thread {
     }
 
     private void parseResponse(int addr) {
-        byte[] frame = frameBuffers[addr];
+        byte[] frame = responseBuffer;
         int byteCount = frame[2] & 0xFF;
         
         if (byteCount < 8) return; // Need at least 4 registers
@@ -230,15 +419,28 @@ public class ModbusListener extends Thread {
         int regTarget    = (frame[9] & 0xFF) << 8 | (frame[10] & 0xFF);
 
         BoardData data = new BoardData(addr);
-        data.online = (regStatus >= 0 && regStatus <= 3);
+        data.online = true;
         data.dispensing = (regStatus == 2);
         data.targetLiters = regTarget / 10.0f;
         data.dispensedLiters = regDispensed / 10.0f;
         data.pulseCount = regFlowrate;
 
+        lastData[addr] = data;
+        lastResponseTimes[addr] = System.currentTimeMillis();
+
         if (listener != null) {
             listener.onBoardUpdated(addr, data);
         }
+    }
+
+    /**
+     * Get a copy of the last known data for a board.
+     */
+    public BoardData getLastData(int address) {
+        if (address >= 1 && address <= 4) {
+            return lastData[address];
+        }
+        return null;
     }
 
     public void shutdown() {

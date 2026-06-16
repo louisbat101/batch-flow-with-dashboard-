@@ -26,7 +26,7 @@
 
 // ── Debug Logging ───────────────────────────────────────
 // Set to 0 to silence per-poll/per-status debug messages in production
-#define DEBUG_RS485      0
+#define DEBUG_RS485      1
 #define DEBUG_CONTROL    1
 
 // ── Data Structures ───────────────────────────────────────────────
@@ -209,8 +209,12 @@ void processResponse() {
   if (pollResponseLen < 13) {
     if (pollResponseLen >= 4 && pollResponse[1] == 0x84) {
       Serial.printf("[RS485] Board %d: FC04 error response\n", addr);
+    } else if (pollResponseLen > 0) {
+      Serial.printf("[RS485] Board %d: RAW %d bytes: ", addr, pollResponseLen);
+      for (int i = 0; i < pollResponseLen; i++) Serial.printf("%02X ", pollResponse[i]);
+      Serial.println();
     } else {
-      if (DEBUG_RS485) Serial.printf("[RS485] Board %d: No valid response (%d bytes)\n", addr, pollResponseLen);
+      if (DEBUG_RS485) Serial.printf("[RS485] Board %d: No response (0 bytes)\n", addr);
     }
     boards[pollBoardIndex].failureCount++;
     if (boards[pollBoardIndex].failureCount >= 3) {
