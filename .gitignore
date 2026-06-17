@@ -27,3 +27,6 @@ android-app/local.properties
 .DS_Store
 
 **/.cxx/
+
+# Temp/dev scratch files
+tmp/
