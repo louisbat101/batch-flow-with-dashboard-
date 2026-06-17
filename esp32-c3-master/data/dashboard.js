@@ -912,13 +912,15 @@ function saveNewLoad() {
   if (existingIndex >= 0) {
     // Update existing
     loadData[existingIndex].product = product.name;
+    loadData[existingIndex].productId = parseInt(productId);
     loadData[existingIndex].amount = amount;
   } else {
     // Add new
     loadData.push({
-      address: stationId,
+      address: parseInt(stationId),
       stationName: 'Station ' + stationId,
       product: product.name,
+      productId: parseInt(productId),
       amount: amount
     });
   }

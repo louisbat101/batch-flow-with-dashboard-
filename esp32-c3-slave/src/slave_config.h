@@ -4,19 +4,36 @@
 //                   RS485 on GPIO 20/21/9 (RXD/TXD/RD)
 // ═══════════════════════════════════════════════════════════════════════
 
-// ── Slave Address ────────────────────────────────────
-// Now configured at runtime via the config web UI.
-// Stored in NVS (flash). Default if not yet set:
-#define DEFAULT_SLAVE_ADDR   1
-#define MIN_SLAVE_ADDR       1     // Slave 1
-#define MAX_SLAVE_ADDR       10    // Slave 10
 
-// ── Config WiFi AP ───────────────────────────────────
-// On first boot (or when button held), the C3 starts a
-// WiFi AP so you can pick the address from a dropdown.
-#define CONFIG_AP_SSID       "FlowNode-Setup"
-#define CONFIG_AP_PASS       "flownode123"
-#define CONFIG_AP_PORT       80
+
+
+
+
+
+// ── Address Selection via Jumpers to GND ─────────────
+// Each C3 board reads GPIO 1/2/3 on boot to set its address.
+// No recompiling needed — just jumper the pin(s) to GND.
+//
+//   GPIO1 | GPIO2 | GPIO3 | Address
+//   ──────┼───────┼───────┼────────
+//   open  | open  | open  | 1 (default - no jumpers)
+//   open  | open  | GND   | 2
+//   open  | GND   | open  | 3
+//   open  | GND   | GND   | 4
+//   GND   | open  | open  | 5
+//   GND   | open  | GND   | 6
+//   GND   | GND   | open  | 7
+//   GND   | GND   | GND   | 8
+#define ADDR_JMP_0        2       // LSB - jumper to GND = bit 0
+#define ADDR_JMP_1        3       // bit 1
+#define ADDR_JMP_2        1       // bit 2 (MSB)
+
+
+
+
+
+
+
 
 // ── RS-485 Pins (ESC3E05 Expansion Board with built-in RS-485) ──────
 // CORRECT pins for ESC3E05 expansion board:
@@ -44,12 +61,17 @@
 // GPIO 8: Flowmeter pulse input (ISR-based counting)
 #define FLOWMETER_PIN     8       // GPIO 8 (pulse input for flow measurement)
 
-// ── WS2811/NeoPixel Status LED ──────────────────────
-// 5V WS2811 RGB LED on GPIO 4 (data pin)
-// Displays: Blue=Master, Cyan=Slave idle, Green=Dispensing,
-//           Yellow=Waiting, Red=Fault, Orange=No-flow, White=Booting
-#define NEOPIXEL_PIN      4       // GPIO 4 (WS2811 data line, 5V)
-#define NEOPIXEL_COUNT    1       // Single LED
-#define LED_POWER_PIN     0       // Power LED (GPIO 0, currently unused)
-#define LED_485_PIN       2       // RS-485 activity LED (GPIO 2, currently unused)
-#define LED_485_FLASH_MS  100     // how long 485 LED stays on per message
+
+
+
+
+
+
+
+
+
+// ── RS-485 Activity LED ─────────────────────────────
+// Blinks whenever data is sent or received on RS-485.
+// Uses GPIO 4 (NeoPixel pin repurposed).
+#define LED_485_PIN       4       // GPIO 4 - RS-485 activity LED
+#define LED_485_FLASH_MS  100     // how long LED stays on per message
