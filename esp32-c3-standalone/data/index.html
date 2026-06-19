@@ -1,161 +1,531 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>ESP32-C3 RGB Control</title>
-    <style>
-        body {
-            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            min-height: 100vh;
-        }
-        .container {
-            max-width: 600px;
-            margin: 0 auto;
-            background: rgba(255,255,255,0.1);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            padding: 30px;
-            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
-            border: 1px solid rgba(255, 255, 255, 0.18);
-        }
-        h1 {
-            text-align: center;
-            margin-bottom: 30px;
-            font-weight: 300;
-            font-size: 2.5em;
-        }
-        .led-controls {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-            gap: 15px;
-            margin: 30px 0;
-        }
-        .led-btn {
-            padding: 15px 20px;
-            border: none;
-            border-radius: 15px;
-            font-size: 16px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            text-decoration: none;
-            text-align: center;
-            color: white;
-            text-shadow: 0 1px 2px rgba(0,0,0,0.3);
-            box-shadow: 0 4px 15px 0 rgba(31, 38, 135, 0.2);
-        }
-        .led-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px 0 rgba(31, 38, 135, 0.4);
-        }
-        .btn-red { background: linear-gradient(45deg, #ff6b6b, #ee5a24); }
-        .btn-green { background: linear-gradient(45deg, #51cf66, #40c057); }
-        .btn-blue { background: linear-gradient(45deg, #339af0, #228be6); }
-        .btn-white { background: linear-gradient(45deg, #adb5bd, #868e96); }
-        .btn-off { background: linear-gradient(45deg, #495057, #343a40); }
-        
-        .status {
-            margin: 30px 0;
-            padding: 20px;
-            background: rgba(0,0,0,0.2);
-            border-radius: 10px;
-            font-family: monospace;
-        }
-        .info-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-            margin-top: 20px;
-            font-size: 14px;
-        }
-        .info-item {
-            background: rgba(0,0,0,0.1);
-            padding: 10px;
-            border-radius: 8px;
-        }
-        .pulse {
-            animation: pulse 2s infinite;
-        }
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.7; }
-            100% { opacity: 1; }
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Batch Loader</title>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="container">
-        <h1>🌈 ESP32-C3 RGB LED Control</h1>
-        
-        <div class="led-controls">
-            <a href="/led/red" class="led-btn btn-red">🔴 RED</a>
-            <a href="/led/green" class="led-btn btn-green">🟢 GREEN</a>
-            <a href="/led/blue" class="led-btn btn-blue">🔵 BLUE</a>
-            <a href="/led/white" class="led-btn btn-white">⚪ WHITE</a>
-            <a href="/led/off" class="led-btn btn-off">⚫ OFF</a>
-        </div>
 
-        <div class="status">
-            <h3>📊 Status</h3>
-            <div id="status-content">
-                <div class="pulse">🔄 Ready for LED control...</div>
-            </div>
-        </div>
+<!-- ════════════════════════════════════════════════════════
+     SIDE MENU
+     ════════════════════════════════════════════════════════ -->
+<aside id="sidebar">
+  <div class="sidebar-header">
+    <div class="app-icon">💧</div>
+    <div class="app-title">
+      <div class="app-name">CHEM DISPENSE</div>
+      <div class="app-subtitle">SYSTEM</div>
+    </div>
+  </div>
+  
+  <nav class="sidebar-nav">
+    <a href="#" class="nav-item active" onclick="switchPage('dashboard'); return false;">
+      <span class="nav-icon">📊</span>
+      <span class="nav-label">Dashboard</span>
+    </a>
+    <a href="#" class="nav-item" onclick="switchPage('products'); return false;">
+      <span class="nav-icon">🧪</span>
+      <span class="nav-label">Products</span>
+    </a>
+    <a href="#" class="nav-item" onclick="switchPage('load'); return false;">
+      <span class="nav-icon">📦</span>
+      <span class="nav-label">Load</span>
+    </a>
+    <a href="#" class="nav-item" onclick="switchPage('run'); return false;">
+      <span class="nav-icon">▶️</span>
+      <span class="nav-label">Run</span>
+    </a>
+    <a href="#" class="nav-item" onclick="switchPage('boards'); return false;">
+      <span class="nav-icon">🖥️</span>
+      <span class="nav-label">Boards</span>
+    </a>
+    <a href="#" class="nav-item" onclick="switchPage('alarms'); return false;">
+      <span class="nav-icon">🚨</span>
+      <span class="nav-label">Alarms</span>
+    </a>
+    <a href="#" class="nav-item" onclick="switchPage('history'); return false;">
+      <span class="nav-icon">📜</span>
+      <span class="nav-label">History</span>
+    </a>
+    <a href="#" class="nav-item" onclick="switchPage('settings'); return false;">
+      <span class="nav-icon">⚙️</span>
+      <span class="nav-label">Settings</span>
+    </a>
+  </nav>
+  
+  <div class="sidebar-footer">
+    <div class="device-info">
+      <div class="device-label">Master Board</div>
+      <div class="device-ip">IP: 192.168.4.1</div>
+      <div class="device-version">Ver 1.0.0</div>
+      <div class="device-version" id="fw-version">Teensy FW: --</div>
+    </div>
+  </div>
+</aside>
 
-        <div class="info-grid">
-            <div class="info-item">
-                <strong>📡 Network:</strong><br>
-                ESP32-C3-Control
-            </div>
-            <div class="info-item">
-                <strong>🌐 IP Address:</strong><br>
-                192.168.4.1
-            </div>
-            <div class="info-item">
-                <strong>🔧 Hardware:</strong><br>
-                ESP32-C3 DevKit
-            </div>
-            <div class="info-item">
-                <strong>💡 LED Type:</strong><br>
-                RGB Neopixel (GPIO 8)
-            </div>
+<!-- ════════════════════════════════════════════════════════
+     MAIN CONTENT
+     ════════════════════════════════════════════════════════ -->
+<main id="main-content">
+  <!-- ── Dashboard Page ─────────────────────────────────── -->
+  <section id="page-dashboard" class="page active">
+    <header id="dashboard-header">
+      <div class="header-top">
+        <h1>DASHBOARD</h1>
+        <div class="header-right">
+          <span id="current-date-time">May 19, 2025 8:42 PM</span>
         </div>
+      </div>
+    </header>
 
-        <div style="text-align: center; margin-top: 30px; font-size: 12px; opacity: 0.8;">
-            <p>🎨 Using neopixelWrite() for RGB LED control</p>
-            <p>✨ Served from ESP32-C3 SPIFFS filesystem</p>
-        </div>
+    <section id="stats-grid">
+      <div class="stat-card">
+        <div class="stat-number" id="stat-total-boards">10</div>
+        <div class="stat-label">Station Slots</div>
+        <div class="stat-detected">Available</div>
+      </div>
+      <div class="stat-card stat-clickable" onclick="switchPage('boards')">
+        <div class="stat-number" id="stat-online-count">1</div>
+        <div class="stat-label">Online</div>
+        <div class="stat-detected">Stations</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="stat-dispensing-count">1</div>
+        <div class="stat-label">Dispensing</div>
+        <div class="stat-detected">Board</div>
+      </div>
+      <div class="stat-card stat-clickable" onclick="switchPage('alarms')">
+        <div class="stat-number" id="stat-alarms-count">1</div>
+        <div class="stat-label">Alarms</div>
+        <div class="stat-detected">Active</div>
+      </div>
+    </section>
+
+    <section id="boards-section">
+      <h2>BOARDS STATUS</h2>
+      <div id="boards-grid"></div>
+    </section>
+  </section>
+
+  <!-- ── Products Page ────────────────────────────────────── -->
+  <section id="page-products" class="page">
+    <div class="page-header">
+      <h1>PRODUCTS</h1>
     </div>
 
-    <script>
-        // Add click feedback
-        document.querySelectorAll('.led-btn').forEach(btn => {
-            btn.addEventListener('click', function(e) {
-                // Update status to show which LED was clicked
-                const color = this.textContent.trim();
-                document.getElementById('status-content').innerHTML = 
-                    \`<div class="pulse">🎯 Sending \${color} command...</div>\`;
-                
-                // Add temporary visual feedback
-                this.style.transform = 'scale(0.95)';
-                setTimeout(() => {
-                    this.style.transform = '';
-                }, 150);
-            });
-        });
+    <!-- Unit Selection -->
+    <div class="settings-section">
+      <div class="settings-header">
+        <span class="settings-icon">🔧</span>
+        <h2>UNIT SELECTION</h2>
+      </div>
+      <div class="settings-content">
+        <div class="unit-selector">
+          <label class="radio-label">
+            <input type="radio" name="unit" value="liters" checked onchange="changeUnit('liters')">
+            <span>Liters</span>
+          </label>
+          <label class="radio-label">
+            <input type="radio" name="unit" value="gallons" onchange="changeUnit('gallons')">
+            <span>Gallons</span>
+          </label>
+        </div>
+        <p class="settings-note">All calibration values per selected unit.</p>
+      </div>
+    </div>
 
-        // Restore status after navigation
-        window.addEventListener('pageshow', function() {
-            setTimeout(() => {
-                document.getElementById('status-content').innerHTML = 
-                    '<div class="pulse">🔄 Ready for LED control...</div>';
-            }, 2000);
-        });
-    </script>
+    <!-- Product Management -->
+    <div class="settings-section">
+      <div class="settings-header">
+        <span class="settings-icon">🧪</span>
+        <h2>PRODUCTS</h2>
+        <button class="btn btn-primary btn-sm" onclick="openAddProductModal()">+ Add Product</button>
+      </div>
+      <div class="settings-content">
+        <div class="info-banner">
+          <span class="info-icon">ℹ️</span>
+          <div>
+            <strong>IMPORTANT</strong>
+            <p>Board addresses and product calibration cannot change once assigned. This is a safety constraint.</p>
+          </div>
+        </div>
+        <table class="products-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Product Name</th>
+              <th>Pulses / Liter</th>
+              <th>Valve Close (sec)</th>
+              <th>Cal Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="products-table-body">
+            <!-- Populated by JS -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Board Configuration -->
+    <div class="settings-section">
+      <div class="settings-header">
+        <span class="settings-icon">🖥️</span>
+        <h2>BOARD CONFIGURATION</h2>
+      </div>
+      <div class="settings-content">
+        <div id="board-config-list">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Calibration History -->
+    <div class="settings-section">
+      <div class="settings-header">
+        <span class="settings-icon">📋</span>
+        <h2>CALIBRATION HISTORY</h2>
+      </div>
+      <div class="settings-content">
+        <div id="calibration-history-list">
+          <p class="no-boards-msg">No calibration records yet. Run a calibration to record history here.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Load Page ────────────────────────────────────── -->
+  <section id="page-load" class="page">
+    <div class="page-header">
+      <h1>LOAD</h1>
+      <button class="btn btn-primary btn-sm" onclick="openAddLoadModal()">+ Add Load</button>
+    </div>
+    
+    <div class="load-container">
+      <table class="load-table">
+        <thead>
+          <tr>
+            <th>Address</th>
+            <th>Station / Name</th>
+            <th>Product</th>
+            <th>Amount (Liters)</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="load-table-body">
+          <!-- Rows will be generated by JS -->
+        </tbody>
+      </table>
+      
+      <div class="load-actions">
+        <button class="btn btn-secondary" onclick="clearAllLoads()">Clear All</button>
+        <div class="spacer"></div>
+        <button class="btn btn-primary" onclick="goToRunPage()">Done →</button>
+      </div>
+      
+      <div class="load-footer">
+        <small>Go to Run page</small>
+      </div>
+    </div>
+  </section>
+
+  <section id="page-run" class="page">
+    <div class="page-header">
+      <h1>RUN</h1>
+      <div class="run-header-actions">
+        <button class="btn btn-secondary" onclick="loadInSequence()">Load In Sequence</button>
+        <button class="btn btn-primary" onclick="loadOneByOne()">Load One By One</button>
+      </div>
+    </div>
+
+    <div class="run-stations-container" id="run-stations-container">
+      <!-- Station cards will be generated here -->
+    </div>
+
+    <div class="run-footer">
+      <button class="btn btn-danger" onclick="stopAllStations()">Stop All</button>
+    </div>
+  </section>
+
+  <section id="page-boards" class="page">
+    <h1>Boards Management</h1>
+    <div id="boards-management-list"></div>
+  </section>
+
+  <section id="page-alarms" class="page">
+    <h1>Alarms</h1>
+    <p>Alarms coming soon...</p>
+  </section>
+
+  <section id="page-history" class="page">
+    <h1>History</h1>
+    <p>History coming soon...</p>
+  </section>
+
+  <section id="page-settings" class="page">
+    <h1>Settings</h1>
+    
+    <!-- Firmware Version Info -->
+    <div class="settings-section">
+      <div class="settings-header">
+        <span class="settings-icon">ℹ️</span>
+        <h2>SYSTEM INFO</h2>
+      </div>
+      <div class="settings-content">
+        <div style="padding: 10px 0;">
+          <p><strong>Master Board:</strong> ESP32-C3</p>
+          <p><strong>Teensy FW Version:</strong> <span id="fw-version-sidebar">--</span></p>
+          <p><strong>C3 FW Version:</strong> 1.0.0</p>
+        </div>
+      </div>
+    </div>
+
+    <p>More settings coming soon...</p>
+  </section>
+</main>
+
+<!-- ════════════════════════════════════════════════════════
+     MODAL: Rename Board
+     ════════════════════════════════════════════════════════ -->
+<div id="rename-modal" class="modal" style="display:none;">
+  <div class="modal-overlay" onclick="closeRenameModal()"></div>
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2>Rename Board</h2>
+      <button class="modal-close" onclick="closeRenameModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="board-info-section">
+        <p><strong>Board ID:</strong> <span id="modal-board-id">-</span></p>
+        <p><strong>Product:</strong> <span id="modal-board-product">-</span></p>
+        <p><strong>Status:</strong> <span id="modal-board-status">-</span></p>
+      </div>
+      <div class="form-group">
+        <label>New Board Name:</label>
+        <input type="text" id="modal-board-name" placeholder="Enter new board name" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="saveRenameBoard()">Save</button>
+      <button class="btn btn-secondary" onclick="closeRenameModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════
+     ADD LOAD MODAL
+     ════════════════════════════════════════════════════════ -->
+<div id="add-load-modal" class="modal" style="display:none;">
+  <div class="modal-overlay" onclick="closeAddLoadModal()"></div>
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2>Add Load</h2>
+      <button class="modal-close" onclick="closeAddLoadModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Select Station:</label>
+        <select id="load-station-select">
+          <option value="">-- Select Station --</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Select Product:</label>
+        <select id="load-product-select">
+          <option value="">-- Select Product --</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Amount (Liters):</label>
+        <input type="number" id="load-amount-input" placeholder="0.0" step="0.1" min="0" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="saveNewLoad()">Add Load</button>
+      <button class="btn btn-secondary" onclick="closeAddLoadModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════
+     PRODUCT ADD/EDIT MODAL
+     ════════════════════════════════════════════════════════ -->
+<div id="product-modal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2 id="product-modal-title">Add Product</h2>
+      <span class="modal-close" onclick="closeProductModal()">&times;</span>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Product Name</label>
+        <input type="text" id="product-name" placeholder="Enter product name" />
+      </div>
+      <div class="form-group">
+        <label>Pulses Per <span id="unit-label">Liter</span></label>
+        <input type="number" id="product-pulses" placeholder="e.g., 450.0" step="0.1" />
+        <small class="field-note">Number of flowmeter pulses per unit volume</small>
+      </div>
+      <div class="form-group">
+        <label>Valve Closing Time (seconds)</label>
+        <input type="number" id="product-valve-time" placeholder="e.g., 0.250" step="0.001" />
+        <small class="field-note">Time for valve to physically close. System calculates when to start closing based on flow rate to hit exact target.</small>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="saveProduct()">Save</button>
+      <button class="btn btn-secondary" onclick="closeProductModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════
+     PRODUCT CALIBRATION MODAL
+     ════════════════════════════════════════════════════════ -->
+<div id="calibration-modal" class="modal" style="display:none;">
+  <div class="modal-overlay" onclick="closeCalibrationModal()"></div>
+  <div class="modal-content calibration-modal-content">
+    <div class="modal-header">
+      <h2>Field Calibration</h2>
+      <button class="modal-close" onclick="closeCalibrationModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <!-- Step indicator -->
+      <div class="cal-steps">
+        <div class="cal-step" id="cal-step-1" data-step="1">1. Prepare</div>
+        <div class="cal-step-arrow">→</div>
+        <div class="cal-step" id="cal-step-2" data-step="2">2. Dispense</div>
+        <div class="cal-step-arrow">→</div>
+        <div class="cal-step" id="cal-step-3" data-step="3">3. Measure</div>
+        <div class="cal-step-arrow">→</div>
+        <div class="cal-step" id="cal-step-4" data-step="4">4. Confirm</div>
+      </div>
+
+      <!-- Product Info -->
+      <div class="board-info-section">
+        <p><strong>Product:</strong> <span id="cal-product-name">-</span></p>
+        <p><strong>Current PPG:</strong> <span id="cal-current-ppl">-</span> pulses/<span id="cal-current-unit">liter</span></p>
+        <p><strong>Current Valve Close:</strong> <span id="cal-current-vct">-</span> sec</p>
+      </div>
+
+      <!-- Step 1: Prepare -->
+      <div class="cal-step-content" id="cal-content-1">
+        <h3>Prepare for Calibration</h3>
+        <div class="cal-prep-checklist">
+          <label class="cal-check-item">
+            <input type="checkbox" id="cal-check-tank" onchange="checkCalReady()">
+            <span>Tank has sufficient product</span>
+          </label>
+          <label class="cal-check-item">
+            <input type="checkbox" id="cal-check-container" onchange="checkCalReady()">
+            <span>Calibration container ready (e.g., 5 gallon pail)</span>
+          </label>
+          <label class="cal-check-item">
+            <input type="checkbox" id="cal-check-vessel" onchange="checkCalReady()">
+            <span>Measurement vessel (graduated cylinder) ready</span>
+          </label>
+          <label class="cal-check-item">
+            <input type="checkbox" id="cal-check-valve" onchange="checkCalReady()">
+            <span>Valve/flowmeter verified working</span>
+          </label>
+        </div>
+        <div class="form-group">
+          <label>Target Test Volume (<span id="cal-unit-label">Liters</span>):</label>
+          <input type="number" id="cal-target-volume" value="5.0" step="0.1" min="0.5" onchange="checkCalReady()">
+          <small class="field-note">Use a known volume for accurate calibration. 5L recommended.</small>
+        </div>
+        <button class="btn btn-primary cal-next-btn" id="cal-btn-gotodispense" onclick="goToCalStep(2)" disabled>Start Dispensing →</button>
+      </div>
+
+      <!-- Step 2: Dispense -->
+      <div class="cal-step-content" id="cal-content-2" style="display:none;">
+        <h3>Dispensing Test Volume</h3>
+        <div class="cal-dispense-status">
+          <p><strong>Status:</strong> <span id="cal-dispense-status-text">Ready to dispense</span></p>
+          <p><strong>Target:</strong> <span id="cal-dispense-target">5.0</span> <span id="cal-dispense-unit">L</span></p>
+          <p><strong>Station:</strong> <span id="cal-dispense-station">-</span></p>
+        </div>
+        <div class="cal-dispense-actions">
+          <button class="btn btn-success btn-lg" id="cal-btn-start-dispense" onclick="startCalDispense()">▶ START DISPENSING</button>
+          <button class="btn btn-danger btn-lg" id="cal-btn-stop-dispense" onclick="stopCalDispense()" style="display:none;">■ STOP</button>
+        </div>
+        <div class="cal-dispense-progress" id="cal-dispense-progress" style="display:none;">
+          <div class="run-progress-bar">
+            <div class="run-progress-fill" id="cal-dispense-progress-fill" style="width:0%">0%</div>
+          </div>
+        </div>
+        <button class="btn btn-primary cal-next-btn" id="cal-btn-gotomeasure" onclick="goToCalStep(3)" style="display:none;">Dispensing Complete → Measure</button>
+      </div>
+
+      <!-- Step 3: Measure -->
+      <div class="cal-step-content" id="cal-content-3" style="display:none;">
+        <h3>Measure Actual Volume</h3>
+        <p>Use your graduated cylinder or measurement vessel to measure the <strong>exact volume</strong> dispensed into your container.</p>
+        <div class="form-group">
+          <label>Actual Volume Dispensed:</label>
+          <div class="cal-measure-input-group">
+            <input type="number" id="cal-actual-volume" step="0.001" min="0" placeholder="e.g., 5.025">
+            <span class="cal-unit-suffix" id="cal-measure-unit">L</span>
+          </div>
+          <small class="field-note">Measure carefully to 3 decimal places for best accuracy.</small>
+        </div>
+        <div class="form-group">
+          <label>Pulses Recorded:</label>
+          <div class="cal-info-display" id="cal-pulses-display">0 pulses</div>
+        </div>
+        <div class="form-group">
+          <label>Operator Name (for record):</label>
+          <input type="text" id="cal-operator-name" placeholder="e.g., John Smith">
+        </div>
+        <button class="btn btn-primary cal-next-btn" id="cal-btn-gotoconfirm" onclick="goToCalStep(4)" disabled>Calculate & Confirm →</button>
+      </div>
+
+      <!-- Step 4: Confirm -->
+      <div class="cal-step-content" id="cal-content-4" style="display:none;">
+        <h3>Calibration Results</h3>
+        <div class="cal-results-box">
+          <div class="cal-result-row">
+            <span class="cal-result-label">Old Pulses/Unit:</span>
+            <span class="cal-result-value" id="cal-result-old-ppl">-</span>
+          </div>
+          <div class="cal-result-row">
+            <span class="cal-result-label">Actual Volume:</span>
+            <span class="cal-result-value" id="cal-result-actual-vol">-</span>
+          </div>
+          <div class="cal-result-row">
+            <span class="cal-result-label">Measured Pulses:</span>
+            <span class="cal-result-value" id="cal-result-pulses">-</span>
+          </div>
+          <div class="cal-result-row cal-result-highlight">
+            <span class="cal-result-label">New Pulses/Unit:</span>
+            <span class="cal-result-value" id="cal-result-new-ppl">-</span>
+          </div>
+          <div class="cal-result-row">
+            <span class="cal-result-label">Change:</span>
+            <span class="cal-result-value" id="cal-result-change">-</span>
+          </div>
+          <div class="cal-result-row">
+            <span class="cal-result-label">New Valve Close Time:</span>
+            <span class="cal-result-value" id="cal-result-new-vct">-</span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Calibration Notes:</label>
+          <textarea id="cal-notes" rows="2" placeholder="Optional notes about this calibration"></textarea>
+        </div>
+        <div class="modal-footer" style="border:none; padding: 16px 0;">
+          <button class="btn btn-primary" onclick="confirmCalibration()">✓ Confirm & Save</button>
+          <button class="btn btn-secondary" onclick="closeCalibrationModal()">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="dashboard.js"></script>
 </body>
 </html>
